@@ -519,7 +519,9 @@ internal sealed class GZipInflater : IDisposable
         const int rootBits = InflateTree.RootBits;
         const int rootMask = (1 << rootBits) - 1;
         const int fixedDistanceBits = 5;
-        int maxMatchBits = typeof(TCodes) == typeof(FixedCodes) ? 8 + fixedDistanceBits + 5 + 13 : 2 * rootBits + 5 + 13;
+        int maxMatchBits = typeof(TCodes) == typeof(FixedCodes)
+            ? 8 + fixedDistanceBits + 5 + 13
+            : _literals.LookupBits + 5 + _distances.LookupBits + 13;
         ReadOnlySpan<ushort> literals = _literals.Root;
         ReadOnlySpan<ushort> distances = _distances.Root;
         ReadOnlySpan<byte> lengthExtras = DeflateCodes.LengthExtra;
@@ -592,8 +594,11 @@ internal sealed class GZipInflater : IDisposable
                 }
                 ulong extra = bits >> used;
                 int code = symbol - DeflateCodes.LengthStart;
-                int lengthBits = lengthExtras[code];
-                int length = lengths[code] + (int)(extra & ((1UL << lengthBits) - 1));
+                // Length symbol 285 encodes 258 without extra bits.
+                bool maximumLength = symbol == MaxLiterals - 1;
+                int lengthBits = maximumLength ? 0 : lengthExtras[code];
+                int length = maximumLength ? DeflateCodes.MaximumLength
+                    : lengths[code] + (int)(extra & ((1UL << lengthBits) - 1));
                 extra >>= lengthBits;
                 used += lengthBits;
                 if (length > output.Length - written)
