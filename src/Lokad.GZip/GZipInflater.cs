@@ -271,27 +271,30 @@ internal sealed class GZipInflater : IDisposable
 
                 case State.Symbol:
                     InflateTree literals = _literals;
+                    int symbol;
                     while (true)
                     {
-                        if (!literals.TryRead(ref _bits, ref input, out _symbol))
+                        if (!literals.TryRead(ref _bits, ref input, out symbol))
                             return InflateStatus.NeedInput;
-                        if (_symbol >= EndOfBlock)
+                        if (symbol >= EndOfBlock)
                             break;
                         if (output.IsEmpty)
                         {
+                            _symbol = symbol;
                             _state = State.Literal;
                             return InflateStatus.NeedOutput;
                         }
-                        Emit((byte)_symbol, ref output);
+                        Emit((byte)symbol, ref output);
                     }
-                    if (_symbol == EndOfBlock)
+                    if (symbol == EndOfBlock)
                     {
                         EndBlock();
                         break;
                     }
-                    if (_symbol >= MaxLiterals)
+                    if (symbol >= MaxLiterals)
                         throw new InvalidDataException("Reserved DEFLATE length symbol.");
                     // Keep a resume state while jumping directly through the match.
+                    _symbol = symbol;
                     _state = State.Length;
                     goto case State.Length;
 

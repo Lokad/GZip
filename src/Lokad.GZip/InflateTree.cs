@@ -14,6 +14,7 @@ internal sealed class InflateTree
     private readonly int[] _firstCode = new int[MaxBits + 1];
     private readonly int[] _firstSymbol = new int[MaxBits + 1];
     private int _maximumLength;
+    private int _lookupBits;
 
     internal InflateTree(int symbols) => _symbols = new ushort[symbols];
 
@@ -33,6 +34,7 @@ internal sealed class InflateTree
             }
         }
 
+        _lookupBits = Math.Min(RootBits, _maximumLength);
         if (_maximumLength == 0)
         {
             if (!allowEmpty)
@@ -79,14 +81,14 @@ internal sealed class InflateTree
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryRead(ref BitReader bits, ref ReadOnlySpan<byte> input, out int symbol)
     {
-        int lookupBits = Math.Min(RootBits, _maximumLength);
-        if (bits.Count < lookupBits)
-            bits.Fill(ref input, lookupBits);
+        int lookupBits = _lookupBits;
+        if (bits.Count < lookupBits && !bits.Fill(ref input, lookupBits))
+            return TryReadSlow(ref bits, ref input, out symbol);
+
         ushort entry = _root[bits.Peek(RootBits)];
-        int fastLength = entry >> RootBits;
-        if (fastLength > 0 && fastLength <= bits.Count)
+        if (entry != 0)
         {
-            bits.Consume(fastLength);
+            bits.Consume(entry >> RootBits);
             symbol = entry & (RootSize - 1);
             return true;
         }

@@ -40,7 +40,7 @@ internal struct BitReader
 
     internal bool TryRead(ref ReadOnlySpan<byte> input, int count, out uint value)
     {
-        if (!Fill(ref input, count))
+        if (Count < count && !Fill(ref input, count))
         {
             value = 0;
             return false;
