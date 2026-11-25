@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Buffers;
 using System.Buffers.Binary;
 
@@ -92,6 +93,13 @@ internal sealed class DeflateBlockWriter : IDisposable
             return;
         }
 
+        if (CanSkipTreesForStoredBlock(original.Length, forceFixed))
+        {
+            WriteStored(bits, original, final);
+            ResetBlock();
+            return;
+        }
+
         int literalCount = _literals.Build(_literalFrequencies);
         int distanceCount = _distances.Build(_distanceFrequencies);
         CollectRuns(_literals.Lengths[..literalCount]);
@@ -139,6 +147,41 @@ internal sealed class DeflateBlockWriter : IDisposable
         ResetBlock();
         if (final)
             bits.Align();
+    }
+
+    private bool CanSkipTreesForStoredBlock(int originalLength, bool forceFixed)
+    {
+        if (_symbolCount < 4096 || originalLength < _symbolCount || originalLength - _symbolCount > (originalLength >> 6))
+            return false;
+
+        // Invert the block-size comparison after accounting for match extra bits.
+        int minimumBits = (originalLength + 4) * 8 - 10 - _extraBits;
+        if (forceFixed)
+            return FixedLiterals.CountBits(_literalFrequencies) + FixedDistances.CountBits(_distanceFrequencies) >= minimumBits;
+
+        // Every dynamic block uses at least 14 count bits and four 3-bit code-length values.
+        const int minimumHeader = 26;
+        const int maximumCodeLength = 15;
+        const long scale = 1L << maximumCodeLength;
+        // This penalty favors eight-bit codes at the frequencies typical of a nearly literal block.
+        int penalty = _symbolCount + _symbolCount / 3;
+
+        // The code-space shares 2^-length sum to at most one in any prefix tree.
+        // Minimize weight * length + penalty * share for each literal or length symbol.
+        // Subtracting the full penalty bounds the bit count of every valid tree from below.
+        long bound = -(penalty * scale);
+        foreach (int weight in _literalFrequencies)
+        {
+            if (weight == 0)
+                continue;
+
+            int length = Math.Clamp(BitOperations.Log2((uint)(penalty / weight)), 1, maximumCodeLength);
+            bound += (long)weight * length * scale + ((long)penalty << (maximumCodeLength - length));
+        }
+        if (((bound + scale - 1) >> maximumCodeLength) + minimumHeader < minimumBits)
+            return false;
+
+        return FixedLiterals.CountBits(_literalFrequencies) + FixedDistances.CountBits(_distanceFrequencies) >= minimumBits;
     }
 
     private void ResetBlock()

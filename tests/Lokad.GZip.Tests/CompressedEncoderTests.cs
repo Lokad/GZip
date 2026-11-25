@@ -153,6 +153,31 @@ public sealed class CompressedEncoderTests
         }
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MatchesStockWhenHighEntropyBlocksChooseStoredOrDynamic(bool biased)
+    {
+        byte[] input = ReferenceCases.RandomBytes(4 * 16383 + 7);
+        if (biased)
+        {
+            for (int i = 0; i < input.Length; i += 8)
+                input[i] = 0;
+        }
+
+        foreach (int chunkSize in new[] { 8191, input.Length })
+        {
+            var fixture = new ReferenceCase($"high entropy biased={biased}, chunk={chunkSize}", input,
+                ChunkSize: chunkSize, NumericLevel: 6, Strategy: ZLibCompressionStrategy.HuffmanOnly);
+            byte[] stock = await ReferenceCases.CompressAsync(fixture, ReferenceCases.CreateStockStream, async: false);
+            if (!OperatingSystem.IsLinux())
+                stock[9] = 3;
+            Assert.Equal(biased ? 2 : 0, (stock[10] >> 1) & 3);
+            AssertBytes(stock, await EncodeAsync(fixture, async: false), fixture.Name);
+            AssertBytes(stock, await EncodeAsync(fixture, async: true), fixture.Name);
+        }
+    }
+
     private static bool Applies(ReferenceCase fixture)
         => fixture.Level != CompressionLevel.NoCompression && fixture.NumericLevel != 0;
 
