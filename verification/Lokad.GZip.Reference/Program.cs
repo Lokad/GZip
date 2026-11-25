@@ -17,9 +17,10 @@ if (args is ["probe"])
     return 0;
 }
 
-if (args is not ["capture", _] and not ["capture", _, "--extended"] and not ["capture-benchmarks", _])
+if (args is not ["capture", _] and not ["capture", _, "--extended"] and not ["capture-benchmarks", _]
+    and not ["capture-audit", _] and not ["audit", _])
 {
-    Console.Error.WriteLine("Usage: probe | capture <directory> [--extended] | capture-benchmarks <directory>");
+    Console.Error.WriteLine("Usage: probe | capture <directory> [--extended] | capture-benchmarks <directory> | capture-audit <manifest> | audit <manifest>");
     return 2;
 }
 
@@ -37,17 +38,38 @@ const string referenceCommit = "8e0f8ed2312954727f8919d7d1c2f78b483b4ee7";
 #endif
 string? compressionVersion = typeof(System.IO.Compression.GZipStream).Assembly
     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-if (!OperatingSystem.IsLinux() || RuntimeInformation.ProcessArchitecture != Architecture.X64 ||
-    Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
+bool verifyAudit = args[0] == "audit";
+bool linuxX64 = OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
+if ((!verifyAudit && !linuxX64) || Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
 {
-    Console.Error.WriteLine($"Capture requires Microsoft .NET {required} on Linux x64 with compression source commit {referenceCommit}.");
+    string platform = verifyAudit ? "" : " on Linux x64";
+    Console.Error.WriteLine($"{args[0]} requires Microsoft .NET {required}{platform} with compression source commit {referenceCommit}.");
     return 2;
+}
+
+Console.WriteLine($"{RuntimeInformation.FrameworkDescription}, {RuntimeInformation.OSDescription}, {RuntimeInformation.ProcessArchitecture}");
+Console.WriteLine(compressionVersion);
+if (args[0] == "capture-audit")
+{
+    await DifferentialAudit.CaptureAsync(args[1]);
+    return 0;
+}
+if (verifyAudit)
+{
+    try
+    {
+        await DifferentialAudit.VerifyAsync(args[1]);
+        return 0;
+    }
+    catch (InvalidDataException error)
+    {
+        Console.Error.WriteLine(error.Message);
+        return 1;
+    }
 }
 
 string directory = Path.GetFullPath(args[1]);
 Directory.CreateDirectory(directory);
-Console.WriteLine($"{RuntimeInformation.FrameworkDescription}, {RuntimeInformation.OSDescription}, {RuntimeInformation.ProcessArchitecture}");
-Console.WriteLine(compressionVersion);
 IEnumerable<ReferenceCase> cases = args[0] == "capture-benchmarks" ? BenchmarkWorkloads.All.Select(workload => workload.Generate()) :
     args.Length == 3 ? ReferenceCases.Extended() : ReferenceCases.Goldens();
 foreach (ReferenceCase fixture in cases)

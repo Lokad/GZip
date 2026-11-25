@@ -44,3 +44,32 @@ comparison of the headers and empty-stream behaviors.
 Use `capture-benchmarks` in place of `capture` on the .NET 11 target to
 regenerate the `net11.0.benchmarks.sha256` manifest used by benchmark smoke checks. The
 [catalog](../BenchmarkWorkloads.cs) defines their payload and write schedule.
+
+## Differential audit
+
+The audit covers 6,250 short operation schedules and 1,536 seeded payloads
+per target. The short cases compare complete gzip output and the number
+of bytes visible after each write or flush. The seeded cases mix sync
+and async operations, vary the compression settings and check decoded
+bytes through fragmented reads, including concatenated members.
+
+From a clean checkout on Linux x64, capture the stock .NET 11 results
+with the pinned runtime.
+
+```sh
+dotnet restore verification/Lokad.GZip.Reference/Lokad.GZip.Reference.csproj --locked-mode
+dotnet build verification/Lokad.GZip.Reference -c Release --no-restore
+dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll capture-audit artifacts/audit/net11.0.sha256
+```
+
+Keep that manifest when moving to Windows or using a second checkout.
+Build there with the same restore and build commands, then run the audit
+against the captured Linux file.
+
+```sh
+dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll audit artifacts/audit/net11.0.sha256
+```
+
+For .NET 10, substitute `10.0.15` and `net10.0` in the capture and audit
+commands. Set `DOTNET_EnableHWIntrinsic=0` for a scalar check against the
+same manifest. The audit reports the first differing case by name.

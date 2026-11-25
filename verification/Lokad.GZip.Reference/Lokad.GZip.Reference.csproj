@@ -3,7 +3,9 @@
     <OutputType>Exe</OutputType>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/Lokad.GZip/Lokad.GZip.csproj" />
     <Compile Include="../ReferenceCases.cs" Link="ReferenceCases.cs" />
+    <Compile Include="../ReferenceDigests.cs" Link="ReferenceDigests.cs" />
     <Compile Include="../BenchmarkWorkloads.cs" Link="BenchmarkWorkloads.cs" />
   </ItemGroup>
 </Project>
