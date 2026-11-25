@@ -10,4 +10,7 @@
     <EmbeddedResource Include="../../verification/goldens/$(TargetFramework).sha256" LogicalName="reference.sha256" />
     <None Include="../../verification/goldens/$(TargetFramework)/*.gz" Link="Goldens/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup Condition="'$(StrictGZipValidation)' == 'true'">
+    <RuntimeHostConfigurationOption Include="System.IO.Compression.UseStrictValidation" Value="true" />
+  </ItemGroup>
 </Project>

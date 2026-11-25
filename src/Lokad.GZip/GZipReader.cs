@@ -28,6 +28,12 @@ internal sealed class GZipReader : IDisposable
 #endif
     }
 
+    internal void ValidateCompletedMember()
+    {
+        if (UseStrictValidation && !_inflater.FinishedMember)
+            throw new InvalidDataException("The gzip member ended before its trailer.");
+    }
+
     public void Dispose()
     {
         _inflater.Dispose();
@@ -60,6 +66,13 @@ internal sealed class GZipReader : IDisposable
 
     private bool TryDecode(Stream source, Span<byte> destination, out int written)
     {
+        // An empty read can wait for input, but leaves buffered bytes for the next read.
+        if (destination.IsEmpty && !_inflater.HasTrailingInput)
+        {
+            written = 0;
+            return _offset < _length || _inflater.BufferedInputBytes > 0;
+        }
+
         InflateStatus status = _inflater.Decode(_input.AsSpan(_offset, _length - _offset), destination, out int consumed, out written);
         _offset += consumed;
 #if NET11_0_OR_GREATER
@@ -92,8 +105,8 @@ internal sealed class GZipReader : IDisposable
     {
         if (received == 0)
         {
-            if (UseStrictValidation && !emptyDestination && _receivedInput && !_inflater.FinishedMember)
-                throw new InvalidDataException("The gzip member ended before its trailer.");
+            if (!emptyDestination && _receivedInput)
+                ValidateCompletedMember();
             return false;
         }
 

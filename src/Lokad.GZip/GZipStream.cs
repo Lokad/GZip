@@ -244,6 +244,7 @@ public class GZipStream : Stream
                 destination.Write(buffer, 0, count);
             if (reader.ShouldDrainTrailingInput(source))
                 source.CopyTo(Stream.Null, bufferSize);
+            reader.ValidateCompletedMember();
         }
         finally
         {
@@ -460,6 +461,7 @@ public class GZipStream : Stream
                 await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
             if (reader.ShouldDrainTrailingInput(source))
                 await source.CopyToAsync(Stream.Null, bufferSize, cancellationToken).ConfigureAwait(false);
+            reader.ValidateCompletedMember();
         }
         finally
         {

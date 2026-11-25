@@ -100,9 +100,7 @@ internal sealed class GZipInflater : IDisposable
     internal bool FinishedMember => _state is State.NextMember or State.Done;
     internal bool HasTrailingInput => _state == State.Done;
 
-#if NET11_0_OR_GREATER
     internal int BufferedInputBytes => _bits.Count / 8;
-#endif
 
     public void Dispose()
     {

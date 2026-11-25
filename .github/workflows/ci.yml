@@ -37,6 +37,12 @@ jobs:
         env:
           DOTNET_EnableHWIntrinsic: '0'
         run: dotnet test Lokad.GZip.slnx -c Release --no-build --no-restore --logger trx --results-directory TestResults/Scalar
+      - name: Verify strict gzip validation
+        run: >
+          dotnet test tests/Lokad.GZip.Tests -c Release --no-restore
+          -p:StrictGZipValidation=true
+          --filter FullyQualifiedName~ReadingAndCopyingAnEmptySourceMatchesStockValidation
+          --logger trx --results-directory TestResults/Strict
       - name: Verify .NET 11 benchmark workloads
         run: dotnet exec --fx-version 11.0.0 benchmarks/Lokad.GZip.Benchmarks/bin/Release/net11.0/Lokad.GZip.Benchmarks.dll --smoke
       - name: Pack Release

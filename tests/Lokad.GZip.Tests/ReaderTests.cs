@@ -29,6 +29,54 @@ public sealed class ReaderTests
     }
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RepeatedEmptyReadsKeepTheFirstFragmentBuffered(bool async)
+    {
+        byte[] member = ReadGolden("probe");
+        foreach (bool invalidHeader in new[] { false, true })
+        {
+            if (invalidHeader)
+                member[0] = 0;
+
+            using var source = new ShortStream(member, 1);
+            using var gzip = new GZipStream(source, CompressionMode.Decompress);
+            for (int i = 0; i < 3; i++)
+                Assert.Equal(0, async ? await gzip.ReadAsync(Memory<byte>.Empty) : gzip.Read(Span<byte>.Empty));
+            Assert.Equal(1, source.AsynchronousReads + source.SynchronousReads);
+
+            using var decoded = new MemoryStream();
+            if (invalidHeader)
+                await Assert.ThrowsAsync<InvalidDataException>(() => CopyAsync(gzip, decoded, async));
+            else
+            {
+                await CopyAsync(gzip, decoded, async);
+                Assert.Equal("Lokad.GZip\n"u8.ToArray(), decoded.ToArray());
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ReadingAndCopyingAnEmptySourceMatchesStockValidation(bool async)
+    {
+        using var stock = new StockGZip(new MemoryStream(), CompressionMode.Decompress);
+        using var managed = new GZipStream(new MemoryStream(), CompressionMode.Decompress);
+        byte[] buffer = new byte[1];
+        Assert.Equal(0, async ? await stock.ReadAsync(buffer) : stock.Read(buffer.AsSpan()));
+        Assert.Equal(0, async ? await managed.ReadAsync(buffer) : managed.Read(buffer.AsSpan()));
+
+        Exception? expected = await Record.ExceptionAsync(() => CopyAsync(stock, Stream.Null, async));
+        Exception? actual = await Record.ExceptionAsync(() => CopyAsync(managed, Stream.Null, async));
+        if (AppContext.TryGetSwitch("System.IO.Compression.UseStrictValidation", out bool strict) && strict)
+            Assert.IsType<InvalidDataException>(expected);
+        else
+            Assert.Null(expected);
+        Assert.Equal(expected?.GetType(), actual?.GetType());
+    }
+
+    [Theory]
     [InlineData(1)]
     [InlineData(13)]
     [InlineData(4096)]
@@ -156,6 +204,14 @@ public sealed class ReaderTests
 
     private static byte[] ReadGolden(string name)
         => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", name + ".gz"));
+
+    private static async Task CopyAsync(Stream source, Stream destination, bool async)
+    {
+        if (async)
+            await source.CopyToAsync(destination);
+        else
+            source.CopyTo(destination);
+    }
 
     private sealed class SeekableShortStream(byte[] input, int fragment) : MemoryStream(input)
     {
