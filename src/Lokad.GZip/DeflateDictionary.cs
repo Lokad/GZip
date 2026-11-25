@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 
 namespace Lokad.GZip;
@@ -107,23 +108,29 @@ internal sealed class DeflateDictionary : IDisposable
     private static void Slide(Span<ushort> indices, int amount)
     {
         int i = 0;
-        if (Vector256.IsHardwareAccelerated)
+        if (Vector512.IsHardwareAccelerated)
+        {
+            Vector512<ushort> delta = Vector512.Create((ushort)amount);
+            Span<Vector512<ushort>> groups = MemoryMarshal.Cast<ushort, Vector512<ushort>>(indices);
+            foreach (ref Vector512<ushort> group in groups)
+                group = Vector512.SubtractSaturate(group, delta);
+            i = groups.Length * Vector512<ushort>.Count;
+        }
+        else if (Vector256.IsHardwareAccelerated)
         {
             Vector256<ushort> delta = Vector256.Create((ushort)amount);
-            for (; i <= indices.Length - Vector256<ushort>.Count; i += Vector256<ushort>.Count)
-            {
-                Vector256<ushort> values = Vector256.Create((ReadOnlySpan<ushort>)indices[i..]);
-                Vector256.SubtractSaturate(values, delta).CopyTo(indices[i..]);
-            }
+            Span<Vector256<ushort>> groups = MemoryMarshal.Cast<ushort, Vector256<ushort>>(indices);
+            foreach (ref Vector256<ushort> group in groups)
+                group = Vector256.SubtractSaturate(group, delta);
+            i = groups.Length * Vector256<ushort>.Count;
         }
         else if (Vector128.IsHardwareAccelerated)
         {
             Vector128<ushort> delta = Vector128.Create((ushort)amount);
-            for (; i <= indices.Length - Vector128<ushort>.Count; i += Vector128<ushort>.Count)
-            {
-                Vector128<ushort> values = Vector128.Create((ReadOnlySpan<ushort>)indices[i..]);
-                Vector128.SubtractSaturate(values, delta).CopyTo(indices[i..]);
-            }
+            Span<Vector128<ushort>> groups = MemoryMarshal.Cast<ushort, Vector128<ushort>>(indices);
+            foreach (ref Vector128<ushort> group in groups)
+                group = Vector128.SubtractSaturate(group, delta);
+            i = groups.Length * Vector128<ushort>.Count;
         }
 
         for (; i < indices.Length; i++)
