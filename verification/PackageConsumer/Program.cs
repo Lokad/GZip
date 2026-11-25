@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Reflection.PortableExecutable;
 using System.Runtime.InteropServices;
@@ -31,11 +32,29 @@ using (Stream nuspec = Open(package, "Lokad.GZip.nuspec"))
 foreach (string file in new[] { "README.md", "LICENSE.txt", "CHANGELOG.md", "THIRD-PARTY-NOTICES.txt", $"lib/{framework}/Lokad.GZip.xml" })
     Require(package.GetEntry(file) is not null, $"Missing package file {file}.");
 
+string[] libraries = package.Entries.Select(entry => entry.FullName)
+    .Where(name => name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+    .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+Require(libraries.SequenceEqual(new[] { "lib/net10.0/Lokad.GZip.dll", "lib/net11.0/Lokad.GZip.dll" }),
+    "The package must contain exactly one library per target framework.");
+Require(!package.Entries.Any(entry => entry.FullName.StartsWith("runtimes/", StringComparison.OrdinalIgnoreCase)),
+    "The package has runtime-specific assets.");
+
 string dllPath = $"lib/{framework}/Lokad.GZip.dll";
 using MemoryStream library = ReadEntry(package, dllPath);
 byte[] loaded = File.ReadAllBytes(typeof(GZipStream).Assembly.Location);
 Require(library.GetBuffer().AsSpan(0, (int)library.Length).SequenceEqual(loaded), "The consumer loaded a different library.");
 using var pe = new PEReader(library);
+Require(pe.PEHeaders.CorHeader?.Flags.HasFlag(CorFlags.ILOnly) == true, "The library must contain managed IL only.");
+MetadataReader assembly = pe.GetMetadataReader();
+Require(!assembly.MethodDefinitions.Any(handle => assembly.GetMethodDefinition(handle).Attributes.HasFlag(MethodAttributes.PinvokeImpl)),
+    "The library declares a native import.");
+Require(!assembly.TypeReferences.Any(handle =>
+{
+    TypeReference type = assembly.GetTypeReference(handle);
+    return assembly.GetString(type.Namespace) == "System.IO.Compression" &&
+        assembly.GetString(type.Name) is "DeflateStream" or "GZipStream" or "ZLibStream";
+}), "The library references a stock compression stream.");
 DebugDirectoryEntry codeViewEntry = pe.ReadDebugDirectory().Single(entry => entry.Type == DebugDirectoryEntryType.CodeView);
 CodeViewDebugDirectoryData codeView = pe.ReadCodeViewDebugDirectoryData(codeViewEntry);
 
