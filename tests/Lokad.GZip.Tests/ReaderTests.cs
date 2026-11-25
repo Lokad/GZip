@@ -14,15 +14,15 @@ public sealed class ReaderTests
     public async Task StoredRefillsPreserveHistoryAndValidateTrailer(bool async, bool file)
     {
         const int refill = 8192;
-        byte[] stored = ReferenceCases.RandomBytes(4 * refill);
-        byte[] expected = [.. stored, .. stored.AsSpan(refill, 258)];
+        byte[] stored = ReferenceCases.RandomBytes(6 * refill);
+        byte[] expected = [.. stored, .. stored.AsSpan(4 * refill, 258)];
         byte[] header = new byte[GZipFormat.HeaderSize];
         GZipFormat.WriteHeader(header, extraFlags: 0);
         byte[] trailer = new byte[GZipFormat.TrailerSize];
         GZipFormat.WriteTrailer(trailer, Crc32.Update(Crc32.Initial, expected), (uint)expected.Length);
 
-        // A non-final stored block followed by a fixed match of length 258 and distance 24,576.
-        byte[] member = [.. header, 0, 0, 0x80, 0xff, 0x7f, .. stored, 0x1b, 0x3d, 0xff, 0x1f, 0, .. trailer];
+        // The fixed match reaches data copied when the stored block wrapped the history window.
+        byte[] member = [.. header, 0, 0, 0xc0, 0xff, 0x3f, .. stored, 0x1b, 0xdd, 0xff, 0x0f, 0, .. trailer];
         using Stream source = file
             ? new FileStream(Path.Combine(Path.GetTempPath(), $"lokad-gzip-{Guid.NewGuid():N}.gz"),
                 FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096,

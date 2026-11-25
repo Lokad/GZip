@@ -563,12 +563,23 @@ internal sealed class GZipInflater : IDisposable
     private void CommitBytes(ReadOnlySpan<byte> bytes)
     {
         int size = bytes.Length;
-        _crc = Crc32.Update(_crc, bytes);
         _size = unchecked(_size + (uint)size);
         _historyCount = Math.Min(_historyCount + Math.Min(size, WindowSize), WindowSize);
 
         int end = (_writePosition + (size & WindowMask)) & WindowMask;
         int start = _writePosition;
+        // Fold each contiguous part in order so the checksum follows the output across a wrap.
+        if (_state == State.StoredData && size <= WindowSize && Crc32.CanFoldAndCopy(size))
+        {
+            int contiguous = Math.Min(size, WindowSize - start);
+            FoldAndCopyHistory(bytes[..contiguous], _history.AsSpan(start));
+            if (contiguous < size)
+                FoldAndCopyHistory(bytes[contiguous..], _history);
+            _writePosition = end;
+            return;
+        }
+
+        _crc = Crc32.Update(_crc, bytes);
         if (size > WindowSize)
         {
             bytes = bytes[^WindowSize..];
@@ -579,6 +590,17 @@ internal sealed class GZipInflater : IDisposable
         bytes[..first].CopyTo(_history.AsSpan(start));
         bytes[first..].CopyTo(_history);
         _writePosition = end;
+    }
+
+    private void FoldAndCopyHistory(ReadOnlySpan<byte> data, Span<byte> destination)
+    {
+        if (Crc32.CanFoldAndCopy(data.Length))
+            _crc = Crc32.FoldAndCopy(_crc, data, destination);
+        else
+        {
+            _crc = Crc32.Update(_crc, data);
+            data.CopyTo(destination);
+        }
     }
 
     private static InflateTree CreateFixedLiterals()

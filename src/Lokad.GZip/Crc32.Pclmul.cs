@@ -22,8 +22,27 @@ internal static partial class Crc32
     {
         var narrow = Vector128.Create(FoldNarrowLow, FoldNarrowHigh);
         Vector128<ulong> remainder = Pclmulqdq.V512.IsSupported && bytes.Length >= 1024
-            ? FoldWide512(crc, ref bytes, narrow)
+            ? FoldWide512<WithoutCopy>(crc, ref bytes, narrow, default)
             : FoldWide128(crc, ref bytes, narrow);
+        return FinishPclmul(remainder, narrow, ref bytes);
+    }
+
+    internal static bool CanFoldAndCopy(int length) => Pclmulqdq.V512.IsSupported && length >= 1024;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static uint FoldAndCopy(uint crc, ReadOnlySpan<byte> bytes, Span<byte> destination)
+    {
+        int length = bytes.Length;
+        var narrow = Vector128.Create(FoldNarrowLow, FoldNarrowHigh);
+        Vector128<ulong> remainder = FoldWide512<WithCopy>(crc, ref bytes, narrow, destination);
+        bytes.CopyTo(destination[(length - bytes.Length)..]);
+        crc = FinishPclmul(remainder, narrow, ref bytes);
+        return Update(crc, bytes);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static uint FinishPclmul(Vector128<ulong> remainder, Vector128<ulong> narrow, ref ReadOnlySpan<byte> bytes)
+    {
         while (bytes.Length >= 16)
         {
             remainder = Fold(remainder, narrow) ^ Vector128.Create(bytes).AsUInt64();
@@ -65,21 +84,41 @@ internal static partial class Crc32
         return remainder;
     }
 
-    private static Vector128<ulong> FoldWide512(uint crc, ref ReadOnlySpan<byte> bytes, Vector128<ulong> narrow)
+    // Specialize the folding loop for checksum-only and checksum-and-copy callers.
+    private readonly struct WithoutCopy { }
+    private readonly struct WithCopy { }
+
+    private static Vector128<ulong> FoldWide512<TCopy>(uint crc, ref ReadOnlySpan<byte> bytes, Vector128<ulong> narrow, Span<byte> destination)
+        where TCopy : struct
     {
         // Eight interleaved 128-bit lanes advance 128 bytes per fold.
         // These are the reflected residues of x^1056 and x^992.
         var lane = Vector128.Create(0x1e88ef372ul, 0x14a7fe880ul);
         var pair = Vector256.Create(lane, lane);
         var wide = Vector512.Create(pair, pair);
-        var first = Vector512.Create(bytes).AsUInt64() ^ Vector512.CreateScalar((ulong)crc);
+        var first = Vector512.Create(bytes).AsUInt64();
         var second = Vector512.Create(bytes[64..]).AsUInt64();
+        if (typeof(TCopy) == typeof(WithCopy))
+        {
+            first.AsByte().CopyTo(destination);
+            second.AsByte().CopyTo(destination[64..]);
+            destination = destination[128..];
+        }
+        first ^= Vector512.CreateScalar((ulong)crc);
         bytes = bytes[128..];
 
         while (bytes.Length >= 128)
         {
-            first = Fold(first, wide) ^ Vector512.Create(bytes).AsUInt64();
-            second = Fold(second, wide) ^ Vector512.Create(bytes[64..]).AsUInt64();
+            var nextFirst = Vector512.Create(bytes);
+            var nextSecond = Vector512.Create(bytes[64..]);
+            if (typeof(TCopy) == typeof(WithCopy))
+            {
+                nextFirst.CopyTo(destination);
+                nextSecond.CopyTo(destination[64..]);
+                destination = destination[128..];
+            }
+            first = Fold(first, wide) ^ nextFirst.AsUInt64();
+            second = Fold(second, wide) ^ nextSecond.AsUInt64();
             bytes = bytes[128..];
         }
 
