@@ -205,9 +205,15 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
         if (count > 0)
         {
             ReadOnlySpan<byte> accepted = input[..count];
-            accepted.CopyTo(_window.AsSpan(_position + _lookahead));
+            Span<byte> destination = _window.AsSpan(_position + _lookahead);
+            if (count == _windowSize && Crc32.CanFoldAndCopy(count))
+                _crc = Crc32.FoldAndCopy(_crc, accepted, destination);
+            else
+            {
+                accepted.CopyTo(destination);
+                _crc = Crc32.Update(_crc, accepted);
+            }
             _lookahead += count;
-            _crc = Crc32.Update(_crc, accepted);
             _size = unchecked(_size + (uint)count);
             input = input[count..];
         }
