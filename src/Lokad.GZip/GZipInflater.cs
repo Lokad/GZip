@@ -350,7 +350,7 @@ internal sealed class GZipInflater : IDisposable
                     goto case State.Symbol;
 
                 case State.Trailer:
-                    CommitOutput(output, ref memberOutput);
+                    CommitOutput(output, ref memberOutput, keepHistory: false);
                     if (!ReadField(ref input, 8, checksum: false))
                         return InflateStatus.NeedInput;
                     if (BinaryPrimitives.ReadUInt32LittleEndian(_field) != ~_crc)
@@ -697,7 +697,7 @@ internal sealed class GZipInflater : IDisposable
             EndBlock();
     }
 
-    private void CommitOutput(Span<byte> output, ref Span<byte> memberOutput)
+    private void CommitOutput(Span<byte> output, ref Span<byte> memberOutput, bool keepHistory = true)
     {
         int size = memberOutput.Length - output.Length;
         if (size == 0)
@@ -705,7 +705,16 @@ internal sealed class GZipInflater : IDisposable
 
         ReadOnlySpan<byte> bytes = memberOutput[..size];
         memberOutput = output;
-        CommitBytes(bytes);
+        if (keepHistory)
+        {
+            CommitBytes(bytes);
+        }
+        else
+        {
+            // The final block has ended and these bytes cannot be used by a match.
+            _size = unchecked(_size + (uint)size);
+            _crc = Crc32.Update(_crc, bytes);
+        }
     }
 
     private void CommitBytes(ReadOnlySpan<byte> bytes)
@@ -725,7 +734,7 @@ internal sealed class GZipInflater : IDisposable
         }
 
         // Fold each contiguous part in order so the checksum follows the output across a wrap.
-        if (size <= WindowSize && (size == WindowSize || _state == State.StoredData) && Crc32.CanFoldAndCopy(size))
+        if (size <= WindowSize && (size >= 4096 || _state == State.StoredData) && Crc32.CanFoldAndCopy(size))
         {
             int contiguous = Math.Min(size, WindowSize - start);
             FoldAndCopyHistory(bytes[..contiguous], _history.AsSpan(start));
