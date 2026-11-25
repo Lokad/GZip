@@ -23,7 +23,6 @@ internal sealed class InflateTree
     internal void Build(ReadOnlySpan<byte> lengths, bool codeLengths = false, bool allowEmpty = false)
     {
         Debug.Assert(lengths.Length <= _symbols.Length);
-        Array.Clear(_root);
         Array.Clear(_counts);
         _maximumLength = 0;
         foreach (byte length in lengths)
@@ -41,6 +40,7 @@ internal sealed class InflateTree
         {
             if (!allowEmpty)
                 throw new InvalidDataException("Empty DEFLATE Huffman tree.");
+            Array.Clear(_root);
             return;
         }
 
@@ -61,6 +61,11 @@ internal sealed class InflateTree
         if (slots != 0 && (codeLengths || _maximumLength != 1))
             throw new InvalidDataException("Incomplete DEFLATE Huffman tree.");
 
+        // A short tree repeats the same entries for every unused suffix in the root index.
+        int rootSize = 1 << _lookupBits;
+        Span<ushort> root = _root.AsSpan(0, rootSize);
+        if (slots != 0 || _maximumLength > RootBits)
+            root.Clear();
         for (int symbol = 0; symbol < lengths.Length; symbol++)
         {
             int length = lengths[symbol];
@@ -74,10 +79,12 @@ internal sealed class InflateTree
                 int wireCode = DeflateCodes.Reverse(code, length);
                 ushort entry = (ushort)((length << RootBits) | symbol);
                 int stride = 1 << length;
-                for (int i = wireCode; i < RootSize; i += stride)
-                    _root[i] = entry;
+                for (int i = wireCode; i < root.Length; i += stride)
+                    root[i] = entry;
             }
         }
+        for (int size = rootSize; size < RootSize; size *= 2)
+            _root.AsSpan(0, size).CopyTo(_root.AsSpan(size));
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

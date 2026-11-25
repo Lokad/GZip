@@ -24,6 +24,7 @@ public sealed class InflaterTests
     }
 
     [Theory]
+    [InlineData(2)]
     [InlineData(258)]
     [InlineData(259)]
     public void DecodesMaximumLengthMatchAtOutputBoundary(int bufferSize)
@@ -40,6 +41,29 @@ public sealed class InflaterTests
         var (output, finished) = Decode(member, member.Length, bufferSize);
         Assert.True(finished);
         Assert.Equal(expected, output);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void RejectsCodesFromAPreviousDistanceTree(byte length)
+    {
+        var tree = new InflateTree(2);
+        tree.Build([1, 1], allowEmpty: true);
+        Assert.Equal(1, ReadSymbol(tree, 0x5F));
+
+        tree.Build([length, 0], allowEmpty: true);
+        if (length == 1)
+            Assert.Equal(0, ReadSymbol(tree, 0x5E));
+        Assert.Throws<InvalidDataException>(() => ReadSymbol(tree, 0x5F));
+
+        static int ReadSymbol(InflateTree tree, byte data)
+        {
+            var bits = new BitReader();
+            ReadOnlySpan<byte> input = [data];
+            Assert.True(tree.TryRead(ref bits, ref input, out int symbol));
+            return symbol;
+        }
     }
 
     [Theory]

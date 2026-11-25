@@ -269,9 +269,10 @@ internal sealed class GZipInflater : IDisposable
                     break;
 
                 case State.Symbol:
-                    if (input.Length >= sizeof(ulong) && output.Length >= DeflateCodes.MaximumLength)
+                    if (input.Length >= sizeof(ulong) && output.Length >= 2)
                         DecodeFast(ref input, ref output, memberOutput);
 
+                    bool canResumeFast = input.Length >= sizeof(ulong) && output.Length > 2;
                     InflateTree literals = _literals;
                     int symbol;
                     while (true)
@@ -287,6 +288,9 @@ internal sealed class GZipInflater : IDisposable
                             return InflateStatus.NeedOutput;
                         }
                         Emit((byte)symbol, ref output);
+                        // A long literal code may be followed by more root-table symbols.
+                        if (canResumeFast)
+                            goto case State.Symbol;
                     }
                     if (symbol == EndOfBlock)
                     {
@@ -507,7 +511,7 @@ internal sealed class GZipInflater : IDisposable
         int read = 0;
         int written = 0;
         int previousLength = memberOutput.Length - output.Length;
-        while (written <= output.Length - DeflateCodes.MaximumLength)
+        while (written < output.Length - 1)
         {
             if (available < 2 * rootBits)
             {
@@ -552,6 +556,8 @@ internal sealed class GZipInflater : IDisposable
                 int length = lengths[code] + (int)(extra & ((1UL << lengthBits) - 1));
                 extra >>= lengthBits;
                 used += lengthBits;
+                if (length > output.Length - written)
+                    break;
 
                 ushort distanceEntry = distances[(int)extra & rootMask];
                 int distanceCode = distanceEntry & rootMask;
