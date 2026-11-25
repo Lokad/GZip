@@ -118,6 +118,30 @@ public sealed class StreamContractTests
     }
 
     [Fact]
+    public async Task ASecondAsyncOperationCannotCorruptAPendingWrite()
+    {
+        byte[] input = "Lokad.GZip\n"u8.ToArray();
+        using var destination = new DeferredWriteStream();
+        await using var gzip = new ManagedGZip(destination, CompressionLevel.Optimal, leaveOpen: true);
+        Task pending = gzip.WriteAsync(input).AsTask();
+        try
+        {
+            Assert.False(pending.IsCompleted);
+            Assert.Throws<InvalidOperationException>(() => { _ = gzip.WriteAsync(input); });
+        }
+        finally
+        {
+            destination.Release.TrySetResult();
+            await pending;
+        }
+
+        await gzip.WriteAsync(ReadOnlyMemory<byte>.Empty);
+        await gzip.DisposeAsync();
+        byte[] expected = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", "probe.gz"));
+        Assert.Equal(expected, destination.ToArray());
+    }
+
+    [Fact]
     public void SynchronousWriteKeepsItsBuffersDuringReentrantDisposal()
     {
         using var destination = new CallbackDestination();
@@ -150,6 +174,17 @@ public sealed class StreamContractTests
         {
             await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             return Read(buffer.Span);
+        }
+    }
+
+    private sealed class DeferredWriteStream : MemoryStream
+    {
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            await base.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
     }
 
