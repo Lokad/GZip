@@ -120,6 +120,39 @@ public sealed class CompressedEncoderTests
         }
     }
 
+    [Theory]
+    [InlineData(5)]
+    [InlineData(6)]
+    public async Task MatchesStockAcrossLongRunBoundaries(int level)
+    {
+        const int maximumSymbols = 16383;
+        int blockBoundary = maximumSymbols * DeflateCodes.MaximumLength;
+        byte[] input = new byte[blockBoundary + 2 * DefaultWindowSize];
+        input.AsSpan().Fill(0xa6);
+        input[0] = 0x5b;
+        // End the long run after it has crossed a block boundary, then revisit its byte value.
+        int tail = blockBoundary + 37;
+        ReferenceCases.RandomBytes(573).CopyTo(input.AsSpan(tail));
+        input.AsSpan(input.Length - 517).Fill(0x5b);
+        await Check(new("long run across a DEFLATE block", input, NumericLevel: level));
+
+        input = input[^((2 * DefaultWindowSize) + 319)..];
+        await Check(new("long runs with frequent flushes", input, ChunkSize: 1021, FlushEvery: 7, NumericLevel: level));
+#if NET11_0_OR_GREATER
+        await Check(new("long runs with a small window", input, ChunkSize: 521, FlushEvery: 11,
+            NumericLevel: level, WindowLog2: 10));
+#endif
+
+        static async Task Check(ReferenceCase fixture)
+        {
+            byte[] stock = await ReferenceCases.CompressAsync(fixture, ReferenceCases.CreateStockStream, async: false);
+            if (!OperatingSystem.IsLinux())
+                stock[9] = 3;
+            AssertBytes(stock, await EncodeAsync(fixture, async: false), fixture.Name);
+            AssertBytes(stock, await EncodeAsync(fixture, async: true), fixture.Name);
+        }
+    }
+
     private static bool Applies(ReferenceCase fixture)
         => fixture.Level != CompressionLevel.NoCompression && fixture.NumericLevel != 0;
 

@@ -52,6 +52,8 @@ internal sealed class DeflateBlockWriter : IDisposable
 
     internal bool HasSymbols => _symbolCount != 0;
 
+    internal int RemainingSymbols => MaximumSymbols - _symbolCount;
+
     internal bool AddLiteral(byte value)
     {
         _literalFrequencies[value]++;
@@ -68,6 +70,17 @@ internal sealed class DeflateBlockWriter : IDisposable
         _extraBits += DeflateCodes.LengthExtra[lengthCode] + DeflateCodes.DistanceExtra(distanceCode);
         _symbols[_symbolCount++] = new((ushort)length, (ushort)distance);
         return _symbolCount == MaximumSymbols;
+    }
+
+    internal void AddRepeatedMatch(int length, int distance, int count)
+    {
+        int lengthCode = DeflateCodes.LengthCode(length);
+        int distanceCode = DeflateCodes.DistanceCode(distance);
+        _literalFrequencies[DeflateCodes.LengthStart + lengthCode] += count;
+        _distanceFrequencies[distanceCode] += count;
+        _extraBits += count * (DeflateCodes.LengthExtra[lengthCode] + DeflateCodes.DistanceExtra(distanceCode));
+        _symbols.AsSpan(_symbolCount, count).Fill(new((ushort)length, (ushort)distance));
+        _symbolCount += count;
     }
 
     internal void Write(DeflateBits bits, ReadOnlySpan<byte> original, bool final, bool forceFixed)
@@ -142,7 +155,10 @@ internal sealed class DeflateBlockWriter : IDisposable
     internal static void WriteFixedLiteral(DeflateBits bits, byte value) => FixedLiterals.Send(bits, value);
 
     internal static void WriteFixedMatch(DeflateBits bits, int length, int distance)
-        => WriteMatch(bits, length, distance, FixedLiterals, FixedDistances);
+    {
+        ulong code = EncodeMatch(length, distance, FixedLiterals, FixedDistances, out int width);
+        bits.Write(code, width);
+    }
 
     internal static void EndFixed(DeflateBits bits, bool final)
     {
@@ -211,21 +227,37 @@ internal sealed class DeflateBlockWriter : IDisposable
 
     private void WriteSymbols(DeflateBits bits, DeflateCodeTree literals, DeflateCodeTree distances)
     {
-        foreach (Symbol symbol in _symbols.AsSpan(0, _symbolCount))
+        ReadOnlySpan<Symbol> symbols = _symbols.AsSpan(0, _symbolCount);
+        for (int index = 0; index < symbols.Length;)
         {
+            Symbol symbol = symbols[index++];
             if (symbol.Distance == 0)
+            {
                 literals.Send(bits, symbol.Value);
+                continue;
+            }
+
+            ulong code = EncodeMatch(symbol.Value, symbol.Distance, literals, distances, out int width);
+            if (index < symbols.Length && symbols[index] == symbol)
+            {
+                int start = index++;
+                while (index < symbols.Length && symbols[index] == symbol)
+                    index++;
+                bits.WriteRepeated(code, width, index - start + 1);
+            }
             else
-                WriteMatch(bits, symbol.Value, symbol.Distance, literals, distances);
+            {
+                bits.Write(code, width);
+            }
         }
         literals.Send(bits, DeflateCodes.EndOfBlock);
     }
 
-    private static void WriteMatch(DeflateBits bits, int length, int distance, DeflateCodeTree literals, DeflateCodeTree distances)
+    private static ulong EncodeMatch(int length, int distance, DeflateCodeTree literals, DeflateCodeTree distances, out int width)
     {
         int lengthCode = DeflateCodes.LengthCode(length);
         int symbol = DeflateCodes.LengthStart + lengthCode;
-        int width = literals.Lengths[symbol];
+        width = literals.Lengths[symbol];
         ulong code = literals.Code(symbol) | ((ulong)(length - DeflateCodes.LengthBase[lengthCode]) << width);
         width += DeflateCodes.LengthExtra[lengthCode];
 
@@ -233,7 +265,8 @@ internal sealed class DeflateBlockWriter : IDisposable
         code |= (ulong)distances.Code(distanceCode) << width;
         width += distances.Lengths[distanceCode];
         code |= (ulong)(distance - DeflateCodes.DistanceBase(distanceCode)) << width;
-        bits.Write(code, width + DeflateCodes.DistanceExtra(distanceCode));
+        width += DeflateCodes.DistanceExtra(distanceCode);
+        return code;
     }
 
     private static DeflateCodeTree CreateFixedLiterals()

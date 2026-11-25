@@ -82,6 +82,23 @@ internal sealed class DeflateDictionary : IDisposable
             Insert(window, position + i);
     }
 
+    internal void InsertRunBoundaries(ReadOnlySpan<byte> window, int position, int count)
+    {
+        // The last byte of each consumed match and the start of the next match use the same fixed hash.
+        int hash = HashWord(window, position);
+        ushort head = _heads[hash];
+        for (int i = 0; i < count; i++)
+        {
+            position += DeflateCodes.MaximumLength;
+            int preceding = position - 1;
+            if (head != preceding)
+                _previous[preceding & _mask] = head;
+            _previous[position & _mask] = (ushort)preceding;
+            head = (ushort)position;
+        }
+        _heads[hash] = head;
+    }
+
     internal void Reinsert(ReadOnlySpan<byte> window, int start, int length)
     {
         if (_previous.Length == 0)

@@ -33,6 +33,25 @@ internal sealed class DeflateBits : IDisposable
         _count = total;
     }
 
+    internal void WriteRepeated(ulong value, int width, int repetitions)
+    {
+        // Build a word of repeated codes that fits the bit writer's count limit.
+        ulong chunk = value;
+        int chunkWidth = width;
+        int chunkRepetitions = 1;
+        while (chunkWidth < 32 && chunkRepetitions <= repetitions / 2)
+        {
+            chunk |= chunk << chunkWidth;
+            chunkWidth *= 2;
+            chunkRepetitions *= 2;
+        }
+
+        for (; repetitions >= chunkRepetitions; repetitions -= chunkRepetitions)
+            Write(chunk, chunkWidth);
+        for (; repetitions > 0; repetitions--)
+            Write(value, width);
+    }
+
     internal void Align()
     {
         FlushBytes();
