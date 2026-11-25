@@ -557,7 +557,17 @@ internal sealed class GZipInflater : IDisposable
                 }
 
                 output[written++] = (byte)entry;
-                bits >>= used;
+                if (typeof(TCodes) == typeof(FixedCodes))
+                {
+                    // Fixed literals 144–255 have canonical prefixes 25 through 31.
+                    // The uint shift selects a bit using the reversed five-bit prefix.
+                    const uint nineBitPrefixes = 0x88888880u;
+                    bits >>= 8 + (int)((nineBitPrefixes >> (int)bits) & 1);
+                }
+                else
+                {
+                    bits >>= used;
+                }
                 available -= used;
                 entry = literals[(int)bits & rootMask];
                 if (IsLiteral<TCodes>(entry))
