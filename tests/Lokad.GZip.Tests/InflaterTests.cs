@@ -66,6 +66,36 @@ public sealed class InflaterTests
         }
     }
 
+    [Fact]
+    public void DecodesFullLengthNonOverlappingMatchesAcrossHistoryCommits()
+    {
+        const int length = DeflateCodes.MaximumLength;
+        const int repeats = 256;
+        byte[] pattern = ReferenceCases.RandomBytes(length);
+        byte[] expected = new byte[length * repeats];
+        using var bits = new DeflateBits();
+        GZipFormat.WriteHeader(bits.ReserveAligned(GZipFormat.HeaderSize), extraFlags: 0);
+        DeflateBlockWriter.StartFixed(bits, final: true);
+        foreach (byte value in pattern)
+            DeflateBlockWriter.WriteFixedLiteral(bits, value);
+        for (int i = 0; i < repeats; i++)
+        {
+            pattern.CopyTo(expected.AsSpan(i * length, length));
+            if (i > 0)
+                DeflateBlockWriter.WriteFixedMatch(bits, length, distance: length);
+        }
+        DeflateBlockWriter.EndFixed(bits, final: true);
+        GZipFormat.WriteTrailer(bits.ReserveAligned(GZipFormat.TrailerSize),
+            Crc32.Update(Crc32.Initial, expected), (uint)expected.Length);
+        byte[] encoded = new byte[bits.Pending];
+        Span<byte> destination = encoded;
+        bits.Drain(ref destination);
+
+        var (decoded, finished) = Decode(encoded, inputSize: 512, outputSize: 32768);
+        Assert.True(finished);
+        Assert.Equal(expected, decoded);
+    }
+
     [Theory]
     [InlineData(1, 7)]
     [InlineData(8, 7)]

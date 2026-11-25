@@ -629,6 +629,15 @@ internal sealed class GZipInflater : IDisposable
             int source = previousOutput.Length - distance;
             if (source >= 0)
             {
+                if (prefix == DeflateCodes.MaximumLength)
+                {
+                    // Copy the common full-length match with a constant-size copy and a two-byte tail.
+                    const int headLength = DeflateCodes.MaximumLength - sizeof(ushort);
+                    previousOutput.Slice(source, headLength).CopyTo(bytes);
+                    BinaryPrimitives.WriteUInt16LittleEndian(bytes[headLength..],
+                        BinaryPrimitives.ReadUInt16LittleEndian(previousOutput[(source + headLength)..]));
+                    return;
+                }
                 previousOutput.Slice(source, prefix).CopyTo(bytes);
             }
             else
@@ -683,7 +692,7 @@ internal sealed class GZipInflater : IDisposable
         int end = (_writePosition + (size & WindowMask)) & WindowMask;
         int start = _writePosition;
         // Fold each contiguous part in order so the checksum follows the output across a wrap.
-        if (_state == State.StoredData && size <= WindowSize && Crc32.CanFoldAndCopy(size))
+        if (size <= WindowSize && (size == WindowSize || _state == State.StoredData) && Crc32.CanFoldAndCopy(size))
         {
             int contiguous = Math.Min(size, WindowSize - start);
             FoldAndCopyHistory(bytes[..contiguous], _history.AsSpan(start));
