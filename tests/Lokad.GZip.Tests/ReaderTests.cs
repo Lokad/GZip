@@ -68,8 +68,104 @@ public sealed class ReaderTests
         Assert.Equal("Lokad.GZip\n"u8.ToArray(), output.ToArray());
     }
 
+    [Theory]
+    [InlineData(false, false, 0)]
+    [InlineData(true, false, 1)]
+    [InlineData(false, false, 32)]
+    [InlineData(false, true, 0)]
+    [InlineData(true, true, 0)]
+    [InlineData(false, true, 32)]
+    public async Task LeavesTheExpectedPositionAfterTrailingData(bool async, bool copy, int fragment)
+    {
+        byte[] member = ReadGolden("probe");
+        byte[] trailing = new byte[copy ? 9000 : 37];
+        trailing.AsSpan().Fill(0xA9);
+        byte[] encoded = [0xB6, .. member, .. member, .. trailing];
+
+        (byte[] expected, long expectedPosition) = await ReadToEndAsync(managed: false);
+        (byte[] actual, long actualPosition) = await ReadToEndAsync(managed: true);
+        Assert.Equal("Lokad.GZip\nLokad.GZip\n"u8.ToArray(), expected);
+        Assert.Equal(expected, actual);
+#if NET11_0_OR_GREATER
+        if (copy && fragment > 0)
+        {
+            // The stock copy path can read past the gzip boundary on short-reading streams.
+            Assert.Equal(1L + 2L * member.Length, actualPosition);
+            return;
+        }
+#endif
+        Assert.Equal(expectedPosition, actualPosition);
+
+        async Task<(byte[], long)> ReadToEndAsync(bool managed)
+        {
+            using MemoryStream source = fragment == 0 ? new MemoryStream(encoded) : new SeekableShortStream(encoded, fragment);
+            source.Position = 1;
+            using Stream gzip = managed ? new GZipStream(source, CompressionMode.Decompress, leaveOpen: true) :
+                new StockGZip(source, CompressionMode.Decompress, leaveOpen: true);
+            using var decoded = new MemoryStream();
+            if (copy)
+            {
+                if (async)
+                    await gzip.CopyToAsync(decoded);
+                else
+                    gzip.CopyTo(decoded);
+            }
+            else
+            {
+                byte[] buffer = new byte[17];
+                int read;
+                while ((read = async ? await gzip.ReadAsync(buffer.AsMemory()) : gzip.Read(buffer.AsSpan())) > 0)
+                    decoded.Write(buffer, 0, read);
+                long position = source.Position;
+                Assert.Equal(0, async ? await gzip.ReadAsync(buffer.AsMemory()) : gzip.Read(buffer.AsSpan()));
+                Assert.Equal(position, source.Position);
+            }
+            return (decoded.ToArray(), source.Position);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CopyToDrainsTrailingDataFromNonSeekableSources(bool async)
+    {
+        byte[] member = ReadGolden("probe");
+        byte[] tail = new byte[71];
+        using var source = new ShortStream([.. member, .. tail], 17);
+        using var gzip = new GZipStream(source, CompressionMode.Decompress, leaveOpen: true);
+        using var decoded = new MemoryStream();
+        if (async)
+            await gzip.CopyToAsync(decoded);
+        else
+            gzip.CopyTo(decoded);
+
+        Assert.Equal("Lokad.GZip\n"u8.ToArray(), decoded.ToArray());
+        Assert.Equal(-1, source.ReadByte());
+    }
+
+    [Fact]
+    public void ValidatesTheSecondHeaderByteWhenTheSignatureSpansReads()
+    {
+        byte[] member = ReadGolden("probe");
+        byte[] encoded = [.. member, 0x1F, 0x00];
+        using var reference = new StockGZip(new ShortStream(encoded, 1), CompressionMode.Decompress);
+        using var managed = new GZipStream(new ShortStream(encoded, 1), CompressionMode.Decompress);
+        Assert.Throws<InvalidDataException>(() => reference.CopyTo(Stream.Null));
+        Assert.Throws<InvalidDataException>(() => managed.CopyTo(Stream.Null));
+    }
+
     private static byte[] ReadGolden(string name)
         => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", name + ".gz"));
+
+    private sealed class SeekableShortStream(byte[] input, int fragment) : MemoryStream(input)
+    {
+        public override int Read(byte[] buffer, int offset, int count) => base.Read(buffer, offset, Math.Min(count, fragment));
+
+        public override int Read(Span<byte> buffer) => base.Read(buffer[..Math.Min(buffer.Length, fragment)]);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+            => base.ReadAsync(buffer[..Math.Min(buffer.Length, fragment)], cancellationToken);
+    }
 
     private sealed class ShortStream(byte[] input, int fragment) : Stream
     {

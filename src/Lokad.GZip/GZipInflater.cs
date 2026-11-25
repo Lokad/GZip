@@ -98,6 +98,11 @@ internal sealed class GZipInflater : IDisposable
     private int _distance;
 
     internal bool FinishedMember => _state is State.NextMember or State.Done;
+    internal bool HasTrailingInput => _state == State.Done;
+
+#if NET11_0_OR_GREATER
+    internal int BufferedInputBytes => _bits.Count / 8;
+#endif
 
     public void Dispose()
     {
@@ -349,9 +354,7 @@ internal sealed class GZipInflater : IDisposable
                         _state = State.Done;
                         break;
                     }
-                    if (!_bits.Fill(ref input, 16))
-                        return InflateStatus.NeedInput;
-                    if (_bits.Peek(16) != 0x8b1f)
+                    if (_bits.Fill(ref input, 16) && _bits.Peek(16) != 0x8b1f)
                     {
                         _state = State.Done;
                         break;

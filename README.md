@@ -18,6 +18,13 @@ await using var gzip = new GZipStream(output, CompressionLevel.Optimal, leaveOpe
 await input.CopyToAsync(gzip);
 ```
 
+Decompression supports concatenated gzip members. On .NET 11, reading to
+the end or copying from a seekable stream leaves the underlying position
+at the start of trailing non-gzip data. With a fragmented seekable source,
+the stock .NET 11 stream's position after `CopyTo` can depend on how the
+source chunks its input. Lokad.GZip preserves the gzip boundary in that
+case too.
+
 Run `dotnet test Lokad.GZip.slnx -c Release` with the SDK specified in
 `global.json` and both runtimes installed. See the [Linux reference
 fixtures](verification/goldens/README.md) for pinned versions and

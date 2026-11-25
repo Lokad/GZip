@@ -242,6 +242,8 @@ public class GZipStream : Stream
             int count;
             while ((count = reader.Read(source, buffer.AsSpan(0, bufferSize))) != 0)
                 destination.Write(buffer, 0, count);
+            if (reader.ShouldDrainTrailingInput(source))
+                source.CopyTo(Stream.Null, bufferSize);
         }
         finally
         {
@@ -456,6 +458,8 @@ public class GZipStream : Stream
             int count;
             while ((count = await reader.ReadAsync(source, buffer.AsMemory(0, bufferSize), cancellationToken).ConfigureAwait(false)) != 0)
                 await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
+            if (reader.ShouldDrainTrailingInput(source))
+                await source.CopyToAsync(Stream.Null, bufferSize, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
