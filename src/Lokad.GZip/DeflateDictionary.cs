@@ -85,7 +85,7 @@ internal sealed class DeflateDictionary : IDisposable
             for (; i <= indices.Length - Vector256<ushort>.Count; i += Vector256<ushort>.Count)
             {
                 Vector256<ushort> values = Vector256.Create((ReadOnlySpan<ushort>)indices[i..]);
-                (values - Vector256.Min(values, delta)).CopyTo(indices[i..]);
+                Vector256.SubtractSaturate(values, delta).CopyTo(indices[i..]);
             }
         }
         else if (Vector128.IsHardwareAccelerated)
@@ -94,7 +94,7 @@ internal sealed class DeflateDictionary : IDisposable
             for (; i <= indices.Length - Vector128<ushort>.Count; i += Vector128<ushort>.Count)
             {
                 Vector128<ushort> values = Vector128.Create((ReadOnlySpan<ushort>)indices[i..]);
-                (values - Vector128.Min(values, delta)).CopyTo(indices[i..]);
+                Vector128.SubtractSaturate(values, delta).CopyTo(indices[i..]);
             }
         }
 

@@ -1,3 +1,5 @@
+using System.Diagnostics;
+
 namespace Lokad.GZip;
 
 // Managed adaptation of zlib-ng's Intel medium match policy.
@@ -20,13 +22,14 @@ internal sealed partial class CompressedEncoder
             }
 
             MediumMatch current = useNext && next.Length > 0 ? next : FindMediumMatch(dictionary, settings);
-            InsertMediumMatch(dictionary, current, settings);
+            if (current.Length > 1)
+                InsertMediumMatch(dictionary, current, settings);
             if (useNext && _lookahead > MinimumLookahead &&
                 current.Start + current.Length < 2 * _windowSize - MinimumLookahead)
             {
                 _position = current.Start + current.Length;
                 next = FindMediumMatch(dictionary, settings);
-                if (next.Length >= WantedLength)
+                if (current.Length > 1 && next.Length >= WantedLength)
                     ShiftMatch(ref current, ref next);
                 _position = current.Start;
             }
@@ -35,15 +38,16 @@ internal sealed partial class CompressedEncoder
                 next = default;
             }
 
-            bool full = false;
+            bool full;
             if (current.Length >= WantedLength)
             {
                 full = _blocks.AddMatch(current.Length, current.Start - current.Source);
             }
             else
             {
-                for (int position = current.Start; position < current.Start + current.Length; position++)
-                    full |= _blocks.AddLiteral(_window[position]);
+                // A match shift can leave a single literal or consume the entire current match.
+                Debug.Assert(current.Length is 0 or 1);
+                full = current.Length == 1 && _blocks.AddLiteral(_window[current.Start]);
             }
             Advance(current.Length);
             if (full && WriteBlock(ref output, final: false))
@@ -85,7 +89,7 @@ internal sealed partial class CompressedEncoder
     private void ShiftMatch(ref MediumMatch current, ref MediumMatch next)
     {
         int shift = current.Length - 1;
-        if (shift <= 0 || shift > next.Source || shift > next.Start ||
+        if (shift > next.Source || shift > next.Start ||
             _window[next.Source - shift] != _window[next.Start - shift])
             return;
 
