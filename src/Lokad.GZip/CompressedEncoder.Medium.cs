@@ -87,10 +87,41 @@ internal sealed partial class CompressedEncoder
         if (!InRange(candidate))
             return new(_position, 0, 1, _position);
 
-        int length = LongestMatch(dictionary, candidate, settings);
+        int length = _level >= 5
+            ? SearchMediumChain(dictionary, candidate, settings, word)
+            : LongestMatch(dictionary, candidate, settings);
         if (length < WantedLength || _matchStart >= _position)
             length = 1;
         return new(_position, _matchStart, length, _position);
+    }
+
+    private int SearchMediumChain(DeflateDictionary dictionary, int candidate, SearchSettings settings, uint word)
+    {
+        int position = _position;
+        int limit = Math.Max(position - MaximumDistance, 0);
+        int chain = settings.Chain;
+        // Levels 5 and 6 only emit matches of four bytes or longer.
+        int best = WantedLength - 1;
+        ReadOnlySpan<byte> window = _window;
+        do
+        {
+            if (window[candidate + best] == window[position + best] &&
+                word == BinaryPrimitives.ReadUInt32LittleEndian(window[candidate..]))
+            {
+                int length = CommonLength(position, candidate);
+                if (length > best)
+                {
+                    _matchStart = candidate;
+                    if (length > _lookahead)
+                        return _lookahead;
+                    best = length;
+                    if (best >= settings.Nice)
+                        return best;
+                }
+            }
+            candidate = dictionary.Previous(candidate);
+        } while (--chain > 0 && candidate > limit && candidate < position);
+        return best;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -119,7 +150,7 @@ internal sealed partial class CompressedEncoder
                 {
                     _blocks.AddLiterals(window[start..position]);
                     Advance(position - start);
-                    int length = LongestMatch(dictionary, candidate, settings with { Chain = remaining });
+                    int length = SearchMediumChain(dictionary, candidate, settings with { Chain = remaining }, word);
                     return new(position, _matchStart, length, position);
                 }
                 candidate = dictionary.Previous(candidate);
