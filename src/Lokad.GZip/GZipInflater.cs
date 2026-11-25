@@ -496,6 +496,10 @@ internal sealed class GZipInflater : IDisposable
         _state = _finalBlock ? State.Trailer : State.BlockHeader;
     }
 
+    // Bit 8 is set for the end marker and length symbols. A zero entry has no root code.
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool IsLiteral(ushort entry) => (entry & EndOfBlock) == 0 && entry != 0;
+
     // Decode complete root-table tokens, then let the resumable parser handle the next token.
     private void DecodeFast(ref ReadOnlySpan<byte> input, ref Span<byte> output, scoped ReadOnlySpan<byte> memberOutput)
     {
@@ -521,21 +525,16 @@ internal sealed class GZipInflater : IDisposable
             }
 
             ushort entry = literals[(int)bits & rootMask];
-            int symbol = entry & rootMask;
             int used = entry >> rootBits;
-            if (entry == 0 || symbol == EndOfBlock || symbol >= MaxLiterals)
-                break;
-
-            if (symbol < EndOfBlock)
+            if (IsLiteral(entry))
             {
-                output[written++] = (byte)symbol;
+                output[written++] = (byte)entry;
                 bits >>= used;
                 available -= used;
                 entry = literals[(int)bits & rootMask];
-                symbol = entry & rootMask;
-                if (entry != 0 && symbol < EndOfBlock)
+                if (IsLiteral(entry))
                 {
-                    output[written++] = (byte)symbol;
+                    output[written++] = (byte)entry;
                     used = entry >> rootBits;
                     bits >>= used;
                     available -= used;
@@ -544,6 +543,9 @@ internal sealed class GZipInflater : IDisposable
             }
             else
             {
+                int symbol = entry & rootMask;
+                if (entry == 0 || symbol == EndOfBlock || symbol >= MaxLiterals)
+                    break;
                 if (available < maxMatchBits)
                 {
                     if (read > input.Length - sizeof(ulong))
