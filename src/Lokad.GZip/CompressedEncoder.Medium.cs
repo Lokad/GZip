@@ -123,30 +123,23 @@ internal sealed partial class CompressedEncoder
 
     private void ShiftMatch(ref MediumMatch current, ref MediumMatch next)
     {
+        // A shift is useful only if it leaves at most one byte of the current match.
         int shift = current.Length - 1;
-        if (shift > next.Source || shift > next.Start ||
+        if (shift > MaximumShiftedMatchLength - next.Length || shift > next.Source || shift > next.Start ||
             _window[next.Source - shift] != _window[next.Start - shift])
             return;
 
         int limit = Math.Max(next.Start - MaximumDistance, 0);
-        int moved = 0;
-        int source = next.Source;
-        int start = next.Start;
-        int length = next.Length;
-        while (_window[source - 1] == _window[start - 1])
-        {
-            if (current.Length == moved || start <= limit || length >= MaximumShiftedMatchLength || source <= 1)
-                break;
-            source--;
-            start--;
-            length++;
-            moved++;
-        }
+        int available = Math.Min(next.Start - limit,
+            Math.Min(MaximumShiftedMatchLength - next.Length, next.Source - 1));
+        if (available < shift || !_window.AsSpan(next.Source - shift, shift).SequenceEqual(_window.AsSpan(next.Start - shift, shift)))
+            return;
 
-        if (moved > 0 && current.Length - moved <= 1 && length != 2)
-        {
-            current = current with { Length = current.Length - moved };
-            next = new(start, source, length, next.OriginalStart + 1);
-        }
+        int moved = shift;
+        if (available >= current.Length && _window[next.Source - current.Length] == _window[next.Start - current.Length])
+            moved++;
+
+        current = current with { Length = current.Length - moved };
+        next = new(next.Start - moved, next.Source - moved, next.Length + moved, next.OriginalStart + 1);
     }
 }
