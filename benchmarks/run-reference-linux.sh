@@ -22,6 +22,7 @@ printf 'Benchmark artifacts %s\n' "$artifacts"
 project=benchmarks/Lokad.GZip.Benchmarks
 assembly="$project/bin/Release/net11.0/Lokad.GZip.Benchmarks.dll"
 dotnet_path=$(command -v dotnet)
+runtime_version=11.0.0
 
 {
     printf 'Revision %s\n' "$revision"
@@ -30,6 +31,7 @@ dotnet_path=$(command -v dotnet)
     uname -a
     lscpu
     dotnet --info
+    printf 'Benchmark runtime .NET %s\n' "$runtime_version"
     printf 'Benchmark arguments:'
     printf ' %q' "$@"
     printf '\n'
@@ -37,8 +39,8 @@ dotnet_path=$(command -v dotnet)
 
 dotnet restore Lokad.GZip.slnx --locked-mode
 dotnet build "$project" -c Release --no-restore
-dotnet exec --fx-version 11.0.0 "$assembly" --smoke | tee "$artifacts/smoke.txt"
+DOTNET_ROLL_FORWARD=Disable dotnet exec --fx-version "$runtime_version" "$assembly" --smoke | tee "$artifacts/smoke.txt"
 uptime > "$artifacts/load-before.txt"
-dotnet exec --fx-version 11.0.0 "$assembly" --cli "$dotnet_path" \
+DOTNET_ROLL_FORWARD=Disable dotnet exec --fx-version "$runtime_version" "$assembly" --cli "$dotnet_path" \
     --artifacts "$artifacts" --exporters json "$@" | tee "$artifacts/run.txt"
 uptime > "$artifacts/load-after.txt"

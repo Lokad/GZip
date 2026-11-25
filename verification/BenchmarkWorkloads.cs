@@ -20,6 +20,7 @@ internal static class BenchmarkWorkloads
         new("small-text-fast", 16 * KiB, TextBytes, CompressionLevel.Fastest, 4 * KiB),
         new("text-optimal", MiB, TextBytes, CompressionLevel.Optimal, 32 * KiB),
         new("mixed-optimal", MiB, MixedBytes, CompressionLevel.Optimal, 8 * KiB),
+        new("large-mixed-optimal", 16 * MiB, MixedBytes, CompressionLevel.Optimal, 8 * KiB),
         new("mixed-fast", MiB, MixedBytes, CompressionLevel.Fastest, 64 * KiB),
         new("mixed-smallest", 256 * KiB, MixedBytes, CompressionLevel.SmallestSize, 8 * KiB),
         new("entropy-optimal", MiB, RandomBytes, CompressionLevel.Optimal, 32 * KiB),
