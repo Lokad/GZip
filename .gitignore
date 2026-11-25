@@ -1,0 +1,20 @@
+bin/
+obj/
+.vs/
+TestResults/
+BenchmarkDotNet.Artifacts/
+.bdn/
+external/
+/artifacts/
+
+*.nupkg
+*.snupkg
+*.nettrace
+*.nettrace.etlx
+*.gcdump
+
+.claude/
+tmp/
+
+# Local implementation plan and benchmark VM notes.
+/PLAN.md

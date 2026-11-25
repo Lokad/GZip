@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>Lokad.GZip</PackageId>
+    <Title>Lokad.GZip</Title>
+    <Authors>Lokad</Authors>
+    <Company>Lokad</Company>
+    <Description>Deterministic managed gzip streams for .NET.</Description>
+    <Version>0.1.0</Version>
+    <RepositoryUrl>https://github.com/Lokad/GZip.git</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
+    <PackageTags>gzip;deflate;compression;deterministic</PackageTags>
+    <PackageReleaseNotes>Initial managed gzip stream for .NET 10 and .NET 11.</PackageReleaseNotes>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <DebugType>portable</DebugType>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageOutputPath>../../artifacts/nuget/$(Version)/</PackageOutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Lokad.GZip.Tests" />
+    <None Include="../../README.md;../../LICENSE.txt;../../THIRD-PARTY-NOTICES.txt;../../CHANGELOG.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Lokad.GZip.Benchmarks/Lokad.GZip.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Lokad.GZip/Lokad.GZip.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Lokad.GZip.Tests/Lokad.GZip.Tests.csproj" />
+  </Folder>
+  <Folder Name="/verification/">
+    <Project Path="verification/Lokad.GZip.Reference/Lokad.GZip.Reference.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: validate (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-dotnet@v6.0.0
+        with:
+          dotnet-version: '10.0.404'
+          global-json-file: global.json
+      - name: Restore locked dependencies
+        run: dotnet restore Lokad.GZip.slnx --locked-mode
+      - name: Build Release
+        run: dotnet build Lokad.GZip.slnx -c Release --no-restore
+      - name: Test Release
+        run: dotnet test Lokad.GZip.slnx -c Release --no-build --no-restore --logger trx --results-directory TestResults
+      - name: Verify scalar fallback
+        env:
+          DOTNET_EnableHWIntrinsic: '0'
+        run: dotnet test Lokad.GZip.slnx -c Release --no-build --no-restore --logger trx --results-directory TestResults/Scalar
+      - name: Verify .NET 11 benchmark workloads
+        run: dotnet exec --fx-version 11.0.0 benchmarks/Lokad.GZip.Benchmarks/bin/Release/net11.0/Lokad.GZip.Benchmarks.dll --smoke
+      - name: Pack Release
+        run: dotnet pack src/Lokad.GZip/Lokad.GZip.csproj -c Release --no-build --no-restore
+      - name: Verify candidate package
+        shell: pwsh
+        run: |
+          $packages = @(Get-ChildItem artifacts/nuget -Recurse -File -Filter 'Lokad.GZip.*.nupkg')
+          if ($packages.Count -ne 1) { throw 'Expected one core NuGet package.' }
+          ./verification/verify-package.ps1 -PackagePath $packages[0].FullName -ExpectedRevision $env:GITHUB_SHA
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: test-results-${{ matrix.os }}
+          path: TestResults/
+          if-no-files-found: ignore
+      - name: Upload candidate package and symbols
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: packages-${{ matrix.os }}
+          path: |
+            artifacts/nuget/*/*.nupkg
+            artifacts/nuget/*/*.snupkg
+          if-no-files-found: error

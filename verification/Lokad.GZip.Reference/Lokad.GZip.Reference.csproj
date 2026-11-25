@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../ReferenceCases.cs" Link="ReferenceCases.cs" />
+    <Compile Include="../BenchmarkWorkloads.cs" Link="BenchmarkWorkloads.cs" />
+  </ItemGroup>
+</Project>
