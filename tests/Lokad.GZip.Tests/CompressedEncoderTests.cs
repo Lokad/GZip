@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Lokad.GZip.Verification;
@@ -7,6 +8,8 @@ namespace Lokad.GZip.Tests;
 
 public sealed class CompressedEncoderTests
 {
+    private const int DefaultWindowSize = 32768;
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -49,6 +52,21 @@ public sealed class CompressedEncoderTests
     {
         foreach (ReferenceCase fixture in ReferenceCases.Extended().Where(Applies))
             await CompareAsync(fixture);
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(6)]
+    [InlineData(9)]
+    public async Task MatchesStockWithDirtyPooledBuffers(int level)
+    {
+        const int lookahead = DeflateCodes.MaximumLength + DeflateCodes.MinimumLength + 1;
+        const int slideAt = 2 * DefaultWindowSize - lookahead;
+        foreach (int length in new[] { 96, 2 * slideAt + 1 })
+        {
+            await CompareAsync(new($"pooled buffers level {level} length {length}", ReferenceCases.MixedBytes(length),
+                ChunkSize: slideAt, FlushEvery: 1, NumericLevel: level), dirtyBuffers: true);
+        }
     }
 
     [Theory]
@@ -105,11 +123,21 @@ public sealed class CompressedEncoderTests
     private static bool Applies(ReferenceCase fixture)
         => fixture.Level != CompressionLevel.NoCompression && fixture.NumericLevel != 0;
 
-    private static async Task CompareAsync(ReferenceCase fixture)
+    private static async Task CompareAsync(ReferenceCase fixture, bool dirtyBuffers = false)
     {
         byte[] expected = await ReferenceCases.CompressAsync(fixture, ReferenceCases.CreateStockStream, async: false);
         if (!OperatingSystem.IsLinux() && expected.Length > 9)
             expected[9] = 3;
+        if (dirtyBuffers)
+        {
+            byte[] window = ArrayPool<byte>.Shared.Rent(2 * DefaultWindowSize + 8);
+            window.AsSpan().Fill(0xD7);
+            ArrayPool<byte>.Shared.Return(window);
+
+            ushort[] links = ArrayPool<ushort>.Shared.Rent(DefaultWindowSize);
+            links.AsSpan().Fill(0xFFD7);
+            ArrayPool<ushort>.Shared.Return(links);
+        }
         AssertBytes(expected, await EncodeAsync(fixture, async: false), fixture.Name);
     }
 }

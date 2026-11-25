@@ -6,10 +6,11 @@ namespace Lokad.GZip;
 internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrategy strategy, int windowBits) : IDeflateEncoder
 {
     private const int MinimumLookahead = DeflateCodes.MaximumLength + DeflateCodes.MinimumLength + 1;
+    private const int WindowPadding = 8;
     private readonly int _level = level;
     private readonly ZLibCompressionStrategy _strategy = strategy;
     private readonly int _windowSize = 1 << windowBits;
-    private readonly byte[] _window = RentWindow((2 << windowBits) + 8);
+    private readonly byte[] _window = RentWindow((2 << windowBits) + WindowPadding);
     private readonly DeflateBits _bits = new();
     private readonly DeflateBlockWriter _blocks = DeflateBlockWriter.Rent();
     private readonly DeflateDictionary? _dictionary =
@@ -28,8 +29,8 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
     private static byte[] RentWindow(int length)
     {
         byte[] window = ArrayPool<byte>.Shared.Rent(length);
-        // The reference match finder can inspect lookahead padding while comparing candidates.
-        window.AsSpan(0, length).Clear();
+        // The match finder can read the guard bytes beyond the logical window.
+        window.AsSpan(length - WindowPadding, WindowPadding).Clear();
         return window;
     }
 
@@ -182,6 +183,12 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
         int capacity = 2 * _windowSize;
         if (_position >= capacity - MinimumLookahead)
         {
+            // Sliding copies the whole upper half, including unused space.
+            if (_initialized < capacity)
+            {
+                _window.AsSpan(_initialized, capacity - _initialized).Clear();
+                _initialized = capacity;
+            }
             _window.AsSpan(_windowSize, _windowSize).CopyTo(_window);
             _position -= _windowSize;
             _blockStart -= _windowSize;
@@ -203,25 +210,29 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
             _crc = Crc32.Update(_crc, accepted);
             _size = unchecked(_size + (uint)count);
             input = input[count..];
-            if (_dictionary is DeflateDictionary dictionary && _lookahead + _insert >= DeflateCodes.MinimumLength)
-            {
-                int start = _position - _insert;
-                if (_level == 9)
-                    dictionary.Seed(_window, start);
-                else if (start > 0)
-                    dictionary.Insert(_window, start - 1);
-                int length = _insert - (_lookahead == 1 ? 1 : 0);
-                dictionary.Insert(_window, start, length);
-                _insert -= length;
-            }
         }
 
         int end = _position + _lookahead;
-        int paddingEnd = Math.Min(capacity, end + DeflateCodes.MaximumLength);
-        int paddingStart = Math.Max(end, _initialized);
-        if (paddingEnd > paddingStart)
-            _window.AsSpan(paddingStart, paddingEnd - paddingStart).Clear();
-        _initialized = Math.Max(_initialized, paddingEnd);
+        if (_initialized < capacity)
+        {
+            int paddingEnd = Math.Min(capacity, end + DeflateCodes.MaximumLength);
+            int paddingStart = Math.Max(end, _initialized);
+            if (paddingEnd > paddingStart)
+                _window.AsSpan(paddingStart, paddingEnd - paddingStart).Clear();
+            _initialized = Math.Max(_initialized, paddingEnd);
+        }
+
+        if (count > 0 && _dictionary is DeflateDictionary dictionary && _lookahead + _insert >= DeflateCodes.MinimumLength)
+        {
+            int start = _position - _insert;
+            if (_level == 9)
+                dictionary.Seed(_window, start);
+            else if (start > 0)
+                dictionary.Insert(_window, start - 1);
+            int length = _insert - (_lookahead == 1 ? 1 : 0);
+            dictionary.Insert(_window, start, length);
+            _insert -= length;
+        }
     }
 
     private bool WriteBlock(ref Span<byte> output, bool final)

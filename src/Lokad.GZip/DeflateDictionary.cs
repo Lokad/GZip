@@ -23,7 +23,9 @@ internal sealed class DeflateDictionary : IDisposable
         _heads = ArrayPool<ushort>.Shared.Rent(_headCount);
         _previous = ArrayPool<ushort>.Shared.Rent(_windowSize);
         _heads.AsSpan(0, _headCount).Clear();
-        _previous.AsSpan(0, _windowSize).Clear();
+        // Rolling searches can inspect positions that were skipped by insertion.
+        if (rolling)
+            _previous.AsSpan(0, _windowSize).Clear();
     }
 
     public void Dispose()
