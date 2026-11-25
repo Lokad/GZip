@@ -239,6 +239,9 @@ public class GZipStream : Stream
 
             GZipReader reader = Reader;
             buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            if (GZipMemoryCopy.Rent(reader, source, destination, buffer, bufferSize) is { } copy && copy.TryCopy())
+                return;
+
             int count;
             while ((count = reader.Read(source, buffer.AsSpan(0, bufferSize))) != 0)
                 destination.Write(buffer, 0, count);
@@ -456,6 +459,10 @@ public class GZipStream : Stream
         try
         {
             buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+            if (GZipMemoryCopy.Rent(reader, source, destination, buffer, bufferSize) is { } copy &&
+                await copy.TryCopyAsync(cancellationToken).ConfigureAwait(false))
+                return;
+
             int count;
             while ((count = await reader.ReadAsync(source, buffer.AsMemory(0, bufferSize), cancellationToken).ConfigureAwait(false)) != 0)
                 await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);

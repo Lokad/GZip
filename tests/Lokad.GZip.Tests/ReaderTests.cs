@@ -11,6 +11,116 @@ public sealed class ReaderTests
     [InlineData(false, true)]
     [InlineData(true, false)]
     [InlineData(true, true)]
+    public async Task MemoryCopyHandlesOriginsMembersAndTrailingBytes(bool async, bool readPrefix)
+    {
+        byte[] data = ReferenceCases.RandomBytes(32768);
+        byte[] member = CreateStoredMember(data);
+        byte[] encoded = [.. new byte[18], .. member, .. member, .. new byte[9000]];
+        using var source = new MemoryStream(encoded, 11, encoded.Length - 11, writable: false, publiclyVisible: false)
+        {
+            Position = 7
+        };
+        using var reader = new GZipStream(source, CompressionMode.Decompress, leaveOpen: true);
+        using var output = new MemoryStream();
+        if (readPrefix)
+        {
+            byte[] first = new byte[1];
+            int count = async ? await reader.ReadAsync(first.AsMemory()) : reader.Read(first.AsSpan());
+            Assert.Equal(1, count);
+            output.Write(first);
+        }
+
+        if (async)
+            await reader.CopyToAsync(output, 257);
+        else
+            reader.CopyTo(output, 257);
+
+        byte[] expected = [.. data, .. data];
+        Assert.Equal(expected, output.ToArray());
+#if NET11_0_OR_GREATER
+        Assert.Equal(7L + 2L * member.Length, source.Position);
+#else
+        Assert.Equal(source.Length, source.Position);
+#endif
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MemoryCopyCanResumeAfterDestinationFailure(bool async)
+    {
+        const int bufferSize = 257;
+        byte[] data = ReferenceCases.RandomBytes(32768);
+        using var source = new MemoryStream(CreateStoredMember(data), writable: false);
+        using var reader = new GZipStream(source, CompressionMode.Decompress);
+        using var failing = new MemoryStream(Array.Empty<byte>(), 0, 0, writable: true, publiclyVisible: true);
+
+        if (async)
+            await Assert.ThrowsAsync<NotSupportedException>(() => reader.CopyToAsync(failing, bufferSize));
+        else
+            Assert.Throws<NotSupportedException>(() => reader.CopyTo(failing, bufferSize));
+
+        using var output = new MemoryStream();
+        if (async)
+            await reader.CopyToAsync(output, bufferSize);
+        else
+            reader.CopyTo(output, bufferSize);
+        Assert.Equal(data[bufferSize..], output.ToArray());
+    }
+
+    [Fact]
+    public void MemoryCopyFallsBackForSharedStorage()
+    {
+        byte[] backing = CreateStoredMember(ReferenceCases.RandomBytes(32768));
+        using var source = new MemoryStream(backing, writable: false);
+        using var destination = new MemoryStream(backing, 0, backing.Length, writable: true, publiclyVisible: true);
+        using var reader = new GZipReader();
+        GZipMemoryCopy? copy = GZipMemoryCopy.Rent(reader, source, destination, new byte[8192], 8192);
+        Assert.NotNull(copy);
+        Assert.False(copy.TryCopy());
+        Assert.Equal(0, source.Position);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MemoryCopyChecksTruncatedTrailerWithStrictValidation(bool async)
+    {
+        byte[] data = ReferenceCases.RandomBytes(32768);
+        byte[] member = CreateStoredMember(data);
+        using var source = new MemoryStream(member, 0, member.Length - 1, writable: false, publiclyVisible: false);
+        using var reader = new GZipStream(source, CompressionMode.Decompress);
+        using var output = new MemoryStream();
+
+        if (AppContext.TryGetSwitch("System.IO.Compression.UseStrictValidation", out bool strict) && strict)
+            await Assert.ThrowsAsync<InvalidDataException>(CopyAsync);
+        else
+            await CopyAsync();
+
+        Assert.Equal(data, output.ToArray());
+
+        async Task CopyAsync()
+        {
+            if (async)
+                await reader.CopyToAsync(output, 257);
+            else
+                reader.CopyTo(output, 257);
+        }
+    }
+
+    private static byte[] CreateStoredMember(byte[] input)
+    {
+        using var output = new MemoryStream();
+        using (var writer = new StockGZip(output, CompressionLevel.NoCompression, leaveOpen: true))
+            writer.Write(input);
+        return output.ToArray();
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
     public async Task StoredRefillsPreserveHistoryAndValidateTrailer(bool async, bool file)
     {
         const int refill = 8192;
@@ -50,10 +160,10 @@ public sealed class ReaderTests
         async Task CopyAsync(Stream destination)
         {
             using var gzip = new GZipStream(source, CompressionMode.Decompress, leaveOpen: true);
-            if (async)
-                await gzip.CopyToAsync(destination, refill);
-            else
-                gzip.CopyTo(destination, refill);
+            byte[] buffer = new byte[refill];
+            int count;
+            while ((count = async ? await gzip.ReadAsync(buffer.AsMemory()) : gzip.Read(buffer.AsSpan())) != 0)
+                destination.Write(buffer.AsSpan(0, count));
         }
     }
 

@@ -19,6 +19,30 @@ internal sealed class GZipReader : IDisposable
 
     private byte[] Input => _input ??= ArrayPool<byte>.Shared.Rent(BufferSize);
 
+    internal bool CanCopyFromMemory(MemoryStream source)
+        => _offset == _length && source.Length - source.Position >= BufferSize;
+
+    internal InflateStatus DecodeCopyInput(ReadOnlySpan<byte> input, Span<byte> output, out int consumed, out int written)
+    {
+        InflateStatus status = _inflater.Decode(input, output, out consumed, out written);
+        _receivedInput |= consumed != 0;
+        return status;
+    }
+
+    internal void FinishMemoryCopy(MemoryStream source)
+    {
+        if (_inflater.HasTrailingInput)
+        {
+#if NET11_0_OR_GREATER
+            if (!_rewound)
+                RewindTrailingInput(source);
+#else
+            source.Position = source.Length;
+#endif
+        }
+        ValidateCompletedMember();
+    }
+
     internal bool ShouldDrainTrailingInput(Stream source)
     {
 #if NET11_0_OR_GREATER
