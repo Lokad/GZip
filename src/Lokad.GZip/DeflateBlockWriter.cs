@@ -310,11 +310,21 @@ internal sealed class DeflateBlockWriter : IDisposable
 
     private static ulong EncodeMatch(int length, int distance, DeflateCodeTree literals, DeflateCodeTree distances, out int width)
     {
-        int lengthCode = DeflateCodes.LengthCode(length);
-        int symbol = DeflateCodes.LengthStart + lengthCode;
-        width = literals.Lengths[symbol];
-        ulong code = literals.Code(symbol) | ((ulong)(length - DeflateCodes.LengthBase[lengthCode]) << width);
-        width += DeflateCodes.LengthExtra[lengthCode];
+        ulong code;
+        if (length == DeflateCodes.MaximumLength)
+        {
+            const int longestSymbol = DeflateCodes.LiteralCount - 1;
+            code = literals.Code(longestSymbol);
+            width = literals.Lengths[longestSymbol];
+        }
+        else
+        {
+            int lengthCode = DeflateCodes.LengthCode(length);
+            int symbol = DeflateCodes.LengthStart + lengthCode;
+            width = literals.Lengths[symbol];
+            code = literals.Code(symbol) | ((ulong)(length - DeflateCodes.LengthBase[lengthCode]) << width);
+            width += DeflateCodes.LengthExtra[lengthCode];
+        }
 
         int distanceCode = DeflateCodes.DistanceCode(distance);
         code |= (ulong)distances.Code(distanceCode) << width;

@@ -428,12 +428,23 @@ public class GZipStream : Stream
         }
     }
 
-    private async ValueTask WriteAsyncGuarded(GZipWriter writer, Stream destination, ReadOnlyMemory<byte> buffer,
+    private ValueTask WriteAsyncGuarded(GZipWriter writer, Stream destination, ReadOnlyMemory<byte> buffer,
         CancellationToken cancellationToken)
+    {
+        ValueTask pending = writer.WriteAsync(destination, buffer, cancellationToken);
+        if (!pending.IsCompletedSuccessfully)
+            return AwaitWriteAsync(pending);
+
+        pending.GetAwaiter().GetResult();
+        ExitOperation();
+        return ValueTask.CompletedTask;
+    }
+
+    private async ValueTask AwaitWriteAsync(ValueTask pending)
     {
         try
         {
-            await writer.WriteAsync(destination, buffer, cancellationToken).ConfigureAwait(false);
+            await pending.ConfigureAwait(false);
         }
         finally
         {

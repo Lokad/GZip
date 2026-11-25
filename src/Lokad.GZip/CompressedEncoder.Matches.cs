@@ -1,3 +1,5 @@
+using System.Runtime.CompilerServices;
+using System.Runtime.Intrinsics.X86;
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Numerics;
@@ -321,6 +323,10 @@ internal sealed partial class CompressedEncoder
             return BitOperations.TrailingZeroCount(difference) / 8;
 
         int offset = sizeof(ulong);
+        if (Avx512BW.IsSupported)
+        {
+            return CompareLongVectors(first, second);
+        }
         if (Vector256.IsHardwareAccelerated)
         {
             for (; offset <= maximum - Vector256<byte>.Count; offset += Vector256<byte>.Count)
@@ -352,5 +358,23 @@ internal sealed partial class CompressedEncoder
         while (offset < maximum && first[offset] == second[offset])
             offset++;
         return offset;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static int CompareLongVectors(ReadOnlySpan<byte> first, ReadOnlySpan<byte> second)
+    {
+        const int last = DeflateCodes.MaximumLength - 64;
+        // The initial 64-bit probe already established equality at the leading overlap.
+        ulong unequal = ~Vector512.Equals(Vector512.Create(first[2..]), Vector512.Create(second[2..])).ExtractMostSignificantBits();
+        if (unequal != 0)
+            return 2 + BitOperations.TrailingZeroCount(unequal);
+        unequal = ~Vector512.Equals(Vector512.Create(first[66..]), Vector512.Create(second[66..])).ExtractMostSignificantBits();
+        if (unequal != 0)
+            return 66 + BitOperations.TrailingZeroCount(unequal);
+        unequal = ~Vector512.Equals(Vector512.Create(first[130..]), Vector512.Create(second[130..])).ExtractMostSignificantBits();
+        if (unequal != 0)
+            return 130 + BitOperations.TrailingZeroCount(unequal);
+        unequal = ~Vector512.Equals(Vector512.Create(first[last..]), Vector512.Create(second[last..])).ExtractMostSignificantBits();
+        return unequal == 0 ? DeflateCodes.MaximumLength : last + BitOperations.TrailingZeroCount(unequal);
     }
 }
