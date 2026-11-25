@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest]
+        os: [windows-latest, ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -42,6 +42,7 @@ jobs:
       - name: Pack Release
         run: dotnet pack src/Lokad.GZip/Lokad.GZip.csproj -c Release --no-build --no-restore
       - name: Verify candidate package
+        if: runner.arch == 'X64'
         shell: pwsh
         run: |
           $packages = @(Get-ChildItem artifacts/nuget -Recurse -File -Filter 'Lokad.GZip.*.nupkg')

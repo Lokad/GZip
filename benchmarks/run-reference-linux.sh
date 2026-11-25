@@ -4,10 +4,13 @@ set -euo pipefail
 repo=$(git -C "$(dirname -- "$0")" rev-parse --show-toplevel)
 cd "$repo"
 revision=$(git rev-parse HEAD)
-artifacts="artifacts/benchmarks/${revision:0:12}"
 if [[ $# -gt 0 && $1 != --* ]]; then
     artifacts=$1
     shift
+else
+    parent="artifacts/benchmarks/${revision:0:12}"
+    mkdir -p -- "$parent"
+    artifacts=$(mktemp -d "$parent/$(date -u +%Y%m%dT%H%M%SZ).XXXXXXXX")
 fi
 if [[ $# -eq 0 ]]; then
     set -- --filter '*'
@@ -15,6 +18,7 @@ fi
 
 mkdir -p -- "$artifacts"
 artifacts=$(realpath -- "$artifacts")
+printf 'Benchmark artifacts %s\n' "$artifacts"
 project=benchmarks/Lokad.GZip.Benchmarks
 assembly="$project/bin/Release/net11.0/Lokad.GZip.Benchmarks.dll"
 dotnet_path=$(command -v dotnet)

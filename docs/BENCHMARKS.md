@@ -31,5 +31,6 @@ runtime, host load, smoke checks and BenchmarkDotNet outputs together.
 bash benchmarks/run-reference-linux.sh
 ```
 
-The default capture directory is `artifacts/benchmarks/<revision>/`.
+Each run creates a timestamped directory under
+`artifacts/benchmarks/<revision>/` so repeated runs retain their own output.
 Pass a directory and BenchmarkDotNet arguments to run a selected workload.

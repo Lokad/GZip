@@ -280,12 +280,15 @@ internal sealed class GZipInflater : IDisposable
                         Emit((byte)_symbol, ref output);
                     }
                     if (_symbol == EndOfBlock)
+                    {
                         EndBlock();
-                    else if (_symbol < MaxLiterals)
-                        _state = State.Length;
-                    else
+                        break;
+                    }
+                    if (_symbol >= MaxLiterals)
                         throw new InvalidDataException("Reserved DEFLATE length symbol.");
-                    break;
+                    // Keep a resume state while jumping directly through the match.
+                    _state = State.Length;
+                    goto case State.Length;
 
                 case State.Literal:
                     if (output.IsEmpty)
@@ -300,7 +303,7 @@ internal sealed class GZipInflater : IDisposable
                         return InflateStatus.NeedInput;
                     _remaining = DeflateCodes.LengthBase[lengthCode] + (int)lengthExtra;
                     _state = State.Distance;
-                    break;
+                    goto case State.Distance;
 
                 case State.Distance:
                     if (!_distances.TryRead(ref _bits, ref input, out _symbol))
@@ -308,7 +311,7 @@ internal sealed class GZipInflater : IDisposable
                     if (_symbol >= MaxDistances)
                         throw new InvalidDataException("Reserved DEFLATE distance symbol.");
                     _state = State.DistanceExtra;
-                    break;
+                    goto case State.DistanceExtra;
 
                 case State.DistanceExtra:
                     int distanceBits = DeflateCodes.DistanceExtra(_symbol);
@@ -318,14 +321,14 @@ internal sealed class GZipInflater : IDisposable
                     if (_distance - (memberOutput.Length - output.Length) > _historyCount)
                         throw new InvalidDataException("DEFLATE distance exceeds the available history.");
                     _state = State.Match;
-                    break;
+                    goto case State.Match;
 
                 case State.Match:
                     EmitMatch(ref output, memberOutput[..(memberOutput.Length - output.Length)]);
                     if (_remaining > 0)
                         return InflateStatus.NeedOutput;
                     _state = State.Symbol;
-                    break;
+                    goto case State.Symbol;
 
                 case State.Trailer:
                     CommitOutput(output, ref memberOutput);

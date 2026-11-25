@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace Lokad.GZip;
 
@@ -75,6 +76,7 @@ internal sealed class InflateTree
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryRead(ref BitReader bits, ref ReadOnlySpan<byte> input, out int symbol)
     {
         int lookupBits = Math.Min(RootBits, _maximumLength);
@@ -89,6 +91,11 @@ internal sealed class InflateTree
             return true;
         }
 
+        return TryReadSlow(ref bits, ref input, out symbol);
+    }
+
+    private bool TryReadSlow(ref BitReader bits, ref ReadOnlySpan<byte> input, out int symbol)
+    {
         int code = 0;
         for (int length = 1; length <= _maximumLength; length++)
         {

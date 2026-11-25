@@ -18,5 +18,8 @@ if (args is ["--smoke"])
 }
 
 Summary[] summaries = BenchmarkSwitcher.FromAssembly(typeof(GZipBenchmarks).Assembly).Run(args).ToArray();
-return !args.Contains("--list") && summaries.Any(summary =>
-    summary.HasCriticalValidationErrors || summary.Reports.Any(report => !report.Success)) ? 1 : 0;
+if (args.Any(arg => arg is "--list" or "--help" or "-h" or "--version"))
+    return 0;
+
+return summaries.Length == 0 || summaries.Any(summary =>
+    summary.HasCriticalValidationErrors || summary.Reports.Length == 0 || summary.Reports.Any(report => !report.Success)) ? 1 : 0;
