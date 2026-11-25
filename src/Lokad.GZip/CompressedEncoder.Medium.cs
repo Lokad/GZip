@@ -103,9 +103,10 @@ internal sealed partial class CompressedEncoder
         // Levels 5 and 6 only emit matches of four bytes or longer.
         int best = WantedLength - 1;
         ReadOnlySpan<byte> window = _window;
+        byte probe = (byte)(word >> 24);
         do
         {
-            if (window[candidate + best] == window[position + best] &&
+            if (window[candidate + best] == probe &&
                 word == BinaryPrimitives.ReadUInt32LittleEndian(window[candidate..]))
             {
                 int length = CommonLength(position, candidate);
@@ -117,6 +118,7 @@ internal sealed partial class CompressedEncoder
                     best = length;
                     if (best >= settings.Nice)
                         return best;
+                    probe = window[position + best];
                 }
             }
             candidate = dictionary.Previous(candidate);
