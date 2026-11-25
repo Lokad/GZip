@@ -285,10 +285,18 @@ internal sealed partial class CompressedEncoder
 
     private bool CanImprove(int candidate, int best)
     {
-        int width = best < 4 ? 2 : best < 8 ? 4 : 8;
-        int offset = best < 4 ? best - 1 : best < 8 ? best - 3 : best - 7;
-        return _window.AsSpan(candidate + offset, width).SequenceEqual(_window.AsSpan(_position + offset, width)) &&
-            _window.AsSpan(candidate, width).SequenceEqual(_window.AsSpan(_position, width));
+        ReadOnlySpan<byte> previous = _window.AsSpan(candidate);
+        ReadOnlySpan<byte> current = _window.AsSpan(_position);
+        if (best < sizeof(ulong))
+        {
+            // For short matches, the two checks cover the first best + 1 bytes.
+            ulong difference = BinaryPrimitives.ReadUInt64LittleEndian(previous) ^ BinaryPrimitives.ReadUInt64LittleEndian(current);
+            return (difference << (8 * (sizeof(ulong) - 1 - best))) == 0;
+        }
+
+        int offset = best - (sizeof(ulong) - 1);
+        return BinaryPrimitives.ReadUInt64LittleEndian(previous[offset..]) == BinaryPrimitives.ReadUInt64LittleEndian(current[offset..]) &&
+            BinaryPrimitives.ReadUInt64LittleEndian(previous) == BinaryPrimitives.ReadUInt64LittleEndian(current);
     }
 
     private int CommonLength(int left, int right)
