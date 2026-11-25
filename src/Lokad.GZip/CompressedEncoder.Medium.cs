@@ -5,6 +5,8 @@ namespace Lokad.GZip;
 // Managed adaptation of zlib-ng's Intel medium match policy.
 internal sealed partial class CompressedEncoder
 {
+    private const int MaximumShiftedMatchLength = 256;
+
     private readonly record struct MediumMatch(int Start, int Source, int Length, int OriginalStart);
 
     private bool EncodeMedium(DeflateDictionary dictionary, ref ReadOnlySpan<byte> input, ref Span<byte> output, DeflateOperation operation)
@@ -29,7 +31,7 @@ internal sealed partial class CompressedEncoder
             {
                 _position = current.Start + current.Length;
                 next = FindMediumMatch(dictionary, settings);
-                if (current.Length > 1 && next.Length >= WantedLength)
+                if (current.Length > 1 && next.Length is >= WantedLength and < MaximumShiftedMatchLength)
                     ShiftMatch(ref current, ref next);
                 _position = current.Start;
             }
@@ -100,7 +102,7 @@ internal sealed partial class CompressedEncoder
         int length = next.Length;
         while (_window[source - 1] == _window[start - 1])
         {
-            if (current.Length == moved || start <= limit || length >= 256 || source <= 1)
+            if (current.Length == moved || start <= limit || length >= MaximumShiftedMatchLength || source <= 1)
                 break;
             source--;
             start--;
