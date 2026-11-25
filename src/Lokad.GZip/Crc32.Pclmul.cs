@@ -28,7 +28,7 @@ internal static partial class Crc32
         return FinishPclmul(remainder, narrow, ref bytes);
     }
 
-    internal static bool CanFoldAndCopy(int length) => Pclmulqdq.V512.IsSupported && length >= 1024;
+    internal static bool CanFoldAndCopy(int length) => Pclmulqdq.V512.IsSupported && length >= 512;
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     internal static uint FoldAndCopy(uint crc, ReadOnlySpan<byte> bytes, Span<byte> destination)

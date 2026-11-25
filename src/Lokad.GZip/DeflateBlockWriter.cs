@@ -47,7 +47,8 @@ internal sealed class DeflateBlockWriter : IDisposable
 
         ArrayPool<Symbol>.Shared.Return(_symbols);
         _symbols = [];
-        ResetBlock();
+        if (HasSymbols)
+            ResetBlock();
         _cached ??= this;
     }
 
