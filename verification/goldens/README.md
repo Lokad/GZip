@@ -73,3 +73,20 @@ dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/ne
 For .NET 10, substitute `10.0.15` and `net10.0` in the capture and audit
 commands. Set `DOTNET_EnableHWIntrinsic=0` for a scalar check against the
 same manifest. The audit reports the first differing case by name.
+
+## Large member audit
+
+The optional large member audit checks a single `Fastest` member with
+4 GiB of zeros and a 17-byte suffix. It compares every compressed byte
+to stock Linux, checks the wrapped `ISIZE` trailer value, and decodes and
+checks all 4,294,967,313 bytes using a reusable buffer.
+
+Capture on pinned Linux x64 and verify on either OS after building the
+reference project as above. Use the same capture for each platform.
+
+```sh
+dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll capture-large-member artifacts/audit/large-net11.0.gz
+dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll verify-large-member artifacts/audit/large-net11.0.gz
+```
+
+For .NET 10, substitute `10.0.15` and `net10.0` in both commands.

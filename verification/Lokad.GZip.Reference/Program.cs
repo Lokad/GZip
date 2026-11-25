@@ -18,9 +18,14 @@ if (args is ["probe"])
 }
 
 if (args is not ["capture", _] and not ["capture", _, "--extended"] and not ["capture-benchmarks", _]
-    and not ["capture-audit", _] and not ["audit", _])
+    and not ["capture-audit", _] and not ["audit", _]
+    and not ["capture-large-member", _] and not ["verify-large-member", _])
 {
-    Console.Error.WriteLine("Usage: probe | capture <directory> [--extended] | capture-benchmarks <directory> | capture-audit <manifest> | audit <manifest>");
+    Console.Error.WriteLine("""
+        Usage: probe | capture <directory> [--extended] | capture-benchmarks <directory>
+             | capture-audit <manifest> | audit <manifest>
+             | capture-large-member <member.gz> | verify-large-member <member.gz>
+        """);
     return 2;
 }
 
@@ -38,11 +43,11 @@ const string referenceCommit = "8e0f8ed2312954727f8919d7d1c2f78b483b4ee7";
 #endif
 string? compressionVersion = typeof(System.IO.Compression.GZipStream).Assembly
     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
-bool verifyAudit = args[0] == "audit";
+bool verify = args[0] is "audit" or "verify-large-member";
 bool linuxX64 = OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
-if ((!verifyAudit && !linuxX64) || Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
+if ((!verify && !linuxX64) || Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
 {
-    string platform = verifyAudit ? "" : " on Linux x64";
+    string platform = verify ? "" : " on Linux x64";
     Console.Error.WriteLine($"{args[0]} requires Microsoft .NET {required}{platform} with compression source commit {referenceCommit}.");
     return 2;
 }
@@ -54,11 +59,19 @@ if (args[0] == "capture-audit")
     await DifferentialAudit.CaptureAsync(args[1]);
     return 0;
 }
-if (verifyAudit)
+if (args[0] == "capture-large-member")
+{
+    LargeMemberAudit.Capture(args[1]);
+    return 0;
+}
+if (verify)
 {
     try
     {
-        await DifferentialAudit.VerifyAsync(args[1]);
+        if (args[0] == "verify-large-member")
+            LargeMemberAudit.Verify(args[1]);
+        else
+            await DifferentialAudit.VerifyAsync(args[1]);
         return 0;
     }
     catch (InvalidDataException error)
