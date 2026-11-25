@@ -271,7 +271,9 @@ internal sealed class GZipInflater : IDisposable
                 case State.Symbol:
                     if (input.Length >= sizeof(ulong) && output.Length >= 2)
                     {
-                        if (_literals.HasMostlyEightBitCodes)
+                        if (ReferenceEquals(_literals, FixedLiterals))
+                            DecodeFast<FixedCodes>(ref input, ref output, memberOutput);
+                        else if (_literals.HasMostlyEightBitCodes)
                             DecodeFast<WithEightBitPairs>(ref input, ref output, memberOutput);
                         else
                             DecodeFast<WithoutEightBitPairs>(ref input, ref output, memberOutput);
@@ -503,8 +505,10 @@ internal sealed class GZipInflater : IDisposable
 
     // Bit 8 is set for the end marker and length symbols. A zero entry has no root code.
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static bool IsLiteral(ushort entry) => (entry & EndOfBlock) == 0 && entry != 0;
+    private static bool IsLiteral<TCodes>(ushort entry) where TCodes : struct
+        => (entry & EndOfBlock) == 0 && (typeof(TCodes) == typeof(FixedCodes) || entry != 0);
 
+    private readonly struct FixedCodes { }
     private readonly struct WithEightBitPairs { }
     private readonly struct WithoutEightBitPairs { }
 
@@ -514,7 +518,8 @@ internal sealed class GZipInflater : IDisposable
     {
         const int rootBits = InflateTree.RootBits;
         const int rootMask = (1 << rootBits) - 1;
-        const int maxMatchBits = 2 * rootBits + 5 + 13;
+        const int fixedDistanceBits = 5;
+        int maxMatchBits = typeof(TCodes) == typeof(FixedCodes) ? 8 + fixedDistanceBits + 5 + 13 : 2 * rootBits + 5 + 13;
         ReadOnlySpan<ushort> literals = _literals.Root;
         ReadOnlySpan<ushort> distances = _distances.Root;
         ReadOnlySpan<byte> lengthExtras = DeflateCodes.LengthExtra;
@@ -535,7 +540,7 @@ internal sealed class GZipInflater : IDisposable
 
             ushort entry = literals[(int)bits & rootMask];
             int used = entry >> rootBits;
-            if (IsLiteral(entry))
+            if (IsLiteral<TCodes>(entry))
             {
                 const int eightBitLiteral = 8 << rootBits;
                 if (typeof(TCodes) == typeof(WithEightBitPairs) && (entry & 0xff00) == eightBitLiteral)
@@ -555,7 +560,7 @@ internal sealed class GZipInflater : IDisposable
                 bits >>= used;
                 available -= used;
                 entry = literals[(int)bits & rootMask];
-                if (IsLiteral(entry))
+                if (IsLiteral<TCodes>(entry))
                 {
                     output[written++] = (byte)entry;
                     used = entry >> rootBits;
@@ -567,7 +572,7 @@ internal sealed class GZipInflater : IDisposable
             else
             {
                 int symbol = entry & rootMask;
-                if (entry == 0 || symbol == EndOfBlock || symbol >= MaxLiterals)
+                if ((typeof(TCodes) != typeof(FixedCodes) && entry == 0) || symbol == EndOfBlock || symbol >= MaxLiterals)
                     break;
                 if (available < maxMatchBits)
                 {
@@ -584,12 +589,12 @@ internal sealed class GZipInflater : IDisposable
                 if (length > output.Length - written)
                     break;
 
-                ushort distanceEntry = distances[(int)extra & rootMask];
+                ushort distanceEntry = distances[(int)extra & (typeof(TCodes) == typeof(FixedCodes) ? (1 << fixedDistanceBits) - 1 : rootMask)];
                 int distanceCode = distanceEntry & rootMask;
-                if (distanceEntry == 0 || distanceCode >= MaxDistances)
+                if ((typeof(TCodes) != typeof(FixedCodes) && distanceEntry == 0) || distanceCode >= MaxDistances)
                     break;
 
-                int distanceLength = distanceEntry >> rootBits;
+                int distanceLength = typeof(TCodes) == typeof(FixedCodes) ? fixedDistanceBits : distanceEntry >> rootBits;
                 extra >>= distanceLength;
                 int distanceBits = DeflateCodes.DistanceExtra(distanceCode);
                 int distance = DeflateCodes.DistanceBase(distanceCode) + (int)(extra & ((1UL << distanceBits) - 1));
