@@ -7,6 +7,42 @@ namespace Lokad.GZip.Tests;
 public sealed class InflaterTests
 {
     [Theory]
+    [InlineData("1B03", "Reserved DEFLATE length symbol.")]
+    [InlineData("1B7D", "Reserved DEFLATE distance symbol.")]
+    [InlineData("1BDDFF0F00", "DEFLATE distance exceeds the available history.")]
+    public void RejectsInvalidMatchWithRoomForFastDecoding(string deflate, string message)
+    {
+        byte[] header = new byte[GZipFormat.HeaderSize];
+        GZipFormat.WriteHeader(header, extraFlags: 0);
+        byte[] member = [.. header, .. Convert.FromHexString(deflate), .. new byte[32]];
+        byte[] output = new byte[DeflateCodes.MaximumLength];
+        output.AsSpan().Fill(0xA5);
+        using var inflater = new GZipInflater();
+        InvalidDataException error = Assert.Throws<InvalidDataException>(() => inflater.Decode(member, output, out _, out _));
+        Assert.Equal(message, error.Message);
+        Assert.All(output, value => Assert.Equal((byte)0xA5, value));
+    }
+
+    [Theory]
+    [InlineData(258)]
+    [InlineData(259)]
+    public void DecodesMaximumLengthMatchAtOutputBoundary(int bufferSize)
+    {
+        byte[] expected = new byte[259];
+        expected.AsSpan().Fill((byte)'A');
+        byte[] header = new byte[GZipFormat.HeaderSize];
+        GZipFormat.WriteHeader(header, extraFlags: 0);
+        byte[] trailer = new byte[GZipFormat.TrailerSize];
+        GZipFormat.WriteTrailer(trailer, Crc32.Update(Crc32.Initial, expected), (uint)expected.Length);
+        // One literal and a fixed match of length 258 and distance one.
+        byte[] member = [.. header, 0x73, 0x1c, 0x05, 0, .. trailer, 0xA5, .. new byte[32]];
+
+        var (output, finished) = Decode(member, member.Length, bufferSize);
+        Assert.True(finished);
+        Assert.Equal(expected, output);
+    }
+
+    [Theory]
     [InlineData(1, 7)]
     [InlineData(8, 7)]
     [InlineData(17, 1)]

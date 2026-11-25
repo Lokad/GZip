@@ -5,7 +5,7 @@ namespace Lokad.GZip;
 
 internal sealed class InflateTree
 {
-    private const int RootBits = 9;
+    internal const int RootBits = 9;
     private const int MaxBits = 15;
     private const int RootSize = 1 << RootBits;
     private readonly ushort[] _root = new ushort[RootSize];
@@ -15,6 +15,8 @@ internal sealed class InflateTree
     private readonly int[] _firstSymbol = new int[MaxBits + 1];
     private int _maximumLength;
     private int _lookupBits;
+
+    internal ReadOnlySpan<ushort> Root => _root;
 
     internal InflateTree(int symbols) => _symbols = new ushort[symbols];
 

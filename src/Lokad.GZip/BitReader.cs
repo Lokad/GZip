@@ -8,6 +8,14 @@ internal struct BitReader
 
     internal int Count { get; private set; }
 
+    internal ulong BufferedBits => _buffer;
+
+    internal void SetBuffer(ulong bits, int count)
+    {
+        _buffer = bits;
+        Count = count;
+    }
+
     internal bool Fill(ref ReadOnlySpan<byte> input, int count)
     {
         if (Count < count && input.Length >= sizeof(uint))

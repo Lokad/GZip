@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace Lokad.GZip;
 
@@ -268,6 +269,9 @@ internal sealed class GZipInflater : IDisposable
                     break;
 
                 case State.Symbol:
+                    if (input.Length >= sizeof(ulong) && output.Length >= DeflateCodes.MaximumLength)
+                        DecodeFast(ref input, ref output, memberOutput);
+
                     InflateTree literals = _literals;
                     int symbol;
                     while (true)
@@ -488,6 +492,106 @@ internal sealed class GZipInflater : IDisposable
         _state = _finalBlock ? State.Trailer : State.BlockHeader;
     }
 
+    // Decode complete root-table tokens, then let the resumable parser handle the next token.
+    private void DecodeFast(ref ReadOnlySpan<byte> input, ref Span<byte> output, scoped ReadOnlySpan<byte> memberOutput)
+    {
+        const int rootBits = InflateTree.RootBits;
+        const int rootMask = (1 << rootBits) - 1;
+        const int maxMatchBits = 2 * rootBits + 5 + 13;
+        ReadOnlySpan<ushort> literals = _literals.Root;
+        ReadOnlySpan<ushort> distances = _distances.Root;
+        ReadOnlySpan<byte> lengthExtras = DeflateCodes.LengthExtra;
+        ReadOnlySpan<ushort> lengths = DeflateCodes.LengthBase;
+        ulong bits = _bits.BufferedBits;
+        int available = _bits.Count;
+        int read = 0;
+        int written = 0;
+        int previousLength = memberOutput.Length - output.Length;
+        while (written <= output.Length - DeflateCodes.MaximumLength)
+        {
+            if (available < 2 * rootBits)
+            {
+                if (read > input.Length - sizeof(ulong))
+                    break;
+                RefillFast(input, ref bits, ref available, ref read);
+            }
+
+            ushort entry = literals[(int)bits & rootMask];
+            int symbol = entry & rootMask;
+            int used = entry >> rootBits;
+            if (entry == 0 || symbol == EndOfBlock || symbol >= MaxLiterals)
+                break;
+
+            if (symbol < EndOfBlock)
+            {
+                output[written++] = (byte)symbol;
+                bits >>= used;
+                available -= used;
+                entry = literals[(int)bits & rootMask];
+                symbol = entry & rootMask;
+                if (entry != 0 && symbol < EndOfBlock)
+                {
+                    output[written++] = (byte)symbol;
+                    used = entry >> rootBits;
+                    bits >>= used;
+                    available -= used;
+                }
+                continue;
+            }
+            else
+            {
+                if (available < maxMatchBits)
+                {
+                    if (read > input.Length - sizeof(ulong))
+                        break;
+                    RefillFast(input, ref bits, ref available, ref read);
+                }
+                ulong extra = bits >> used;
+                int code = symbol - DeflateCodes.LengthStart;
+                int lengthBits = lengthExtras[code];
+                int length = lengths[code] + (int)(extra & ((1UL << lengthBits) - 1));
+                extra >>= lengthBits;
+                used += lengthBits;
+
+                ushort distanceEntry = distances[(int)extra & rootMask];
+                int distanceCode = distanceEntry & rootMask;
+                if (distanceEntry == 0 || distanceCode >= MaxDistances)
+                    break;
+
+                int distanceLength = distanceEntry >> rootBits;
+                extra >>= distanceLength;
+                int distanceBits = DeflateCodes.DistanceExtra(distanceCode);
+                int distance = DeflateCodes.DistanceBase(distanceCode) + (int)(extra & ((1UL << distanceBits) - 1));
+                int produced = previousLength + written;
+                if (distance - produced > _historyCount)
+                    break;
+
+                Span<byte> match = output.Slice(written, length);
+                CopyMatch(match, memberOutput[..produced], distance);
+                written += length;
+                used += distanceLength + distanceBits;
+            }
+            bits >>= used;
+            available -= used;
+        }
+
+        // Return only the bits from input bytes this loop consumed.
+        if (available < 64)
+            bits &= (1UL << available) - 1;
+        _bits.SetBuffer(bits, available);
+        input = input[read..];
+        output = output[written..];
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void RefillFast(ReadOnlySpan<byte> input, ref ulong bits, ref int available, ref int read)
+    {
+        // Advance by whole bytes. The next load will repeat any partial byte in the accumulator.
+        bits |= BinaryPrimitives.ReadUInt64LittleEndian(input[read..]) << available;
+        read += (63 - available) >> 3;
+        available = 56 + (available & 7);
+    }
+
     private static void Emit(byte value, ref Span<byte> output)
     {
         output[0] = value;
@@ -500,16 +604,23 @@ internal sealed class GZipInflater : IDisposable
         if (count == 0)
             return;
 
-        Span<byte> bytes = output[..count];
-        if (_distance == 1)
+        CopyMatch(output[..count], previousOutput, _distance);
+        _remaining -= count;
+        output = output[count..];
+    }
+
+    private void CopyMatch(Span<byte> bytes, scoped ReadOnlySpan<byte> previousOutput, int distance)
+    {
+        int count = bytes.Length;
+        if (distance == 1)
         {
             byte value = previousOutput.IsEmpty ? _history[(_writePosition - 1) & WindowMask] : previousOutput[^1];
             bytes.Fill(value);
         }
         else
         {
-            int prefix = Math.Min(count, _distance);
-            int source = previousOutput.Length - _distance;
+            int prefix = Math.Min(count, distance);
+            int source = previousOutput.Length - distance;
             if (source >= 0)
             {
                 previousOutput.Slice(source, prefix).CopyTo(bytes);
@@ -533,9 +644,6 @@ internal sealed class GZipInflater : IDisposable
                 written += length;
             }
         }
-
-        _remaining -= count;
-        output = output[count..];
     }
 
     internal bool CanReadStored(int count)
