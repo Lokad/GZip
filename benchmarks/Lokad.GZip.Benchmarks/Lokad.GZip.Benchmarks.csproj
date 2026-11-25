@@ -7,6 +7,7 @@
     <PackageReference Include="BenchmarkDotNet" />
     <ProjectReference Include="../../src/Lokad.GZip/Lokad.GZip.csproj" />
     <Compile Include="../../verification/ReferenceCases.cs" Link="Verification/ReferenceCases.cs" />
+    <Compile Include="../../verification/ReferenceDigests.cs" Link="Verification/ReferenceDigests.cs" />
     <Compile Include="../../verification/BenchmarkWorkloads.cs" Link="Verification/BenchmarkWorkloads.cs" />
     <EmbeddedResource Include="../../verification/goldens/net11.0.benchmarks.sha256" LogicalName="reference.sha256" />
   </ItemGroup>

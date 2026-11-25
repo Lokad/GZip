@@ -6,6 +6,8 @@
     <Using Include="Xunit" />
     <ProjectReference Include="../../src/Lokad.GZip/Lokad.GZip.csproj" />
     <Compile Include="../../verification/ReferenceCases.cs" Link="Verification/ReferenceCases.cs" />
+    <Compile Include="../../verification/ReferenceDigests.cs" Link="Verification/ReferenceDigests.cs" />
+    <EmbeddedResource Include="../../verification/goldens/$(TargetFramework).sha256" LogicalName="reference.sha256" />
     <None Include="../../verification/goldens/$(TargetFramework)/*.gz" Link="Goldens/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

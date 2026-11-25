@@ -7,7 +7,8 @@ namespace Lokad.GZip.Benchmarks;
 
 internal static class BenchmarkVerification
 {
-    private static readonly Dictionary<string, string> Digests = ReadReferenceDigests();
+    private static readonly Dictionary<string, string> Digests =
+        ReferenceDigests.Read(typeof(BenchmarkVerification).Assembly, "reference.sha256");
 
     internal static byte[] Check(ReferenceCase fixture)
     {
@@ -17,7 +18,7 @@ internal static class BenchmarkVerification
             throw new InvalidDataException($"Sync and async output differs for {fixture.Name}.");
 
         string actual = Convert.ToHexStringLower(SHA256.HashData(managed));
-        if (!Digests.TryGetValue(fixture.Name, out string? expected) || actual != expected)
+        if (!Digests.TryGetValue(fixture.Name + ".gz", out string? expected) || actual != expected)
             throw new InvalidDataException($"Linux gzip reference differs for {fixture.Name}. Expected {expected}, got {actual}.");
 
         byte[] baseline = ReferenceCases.CompressAsync(fixture, ReferenceCases.CreateStockStream, async: false).GetAwaiter().GetResult();
@@ -31,20 +32,6 @@ internal static class BenchmarkVerification
 
     private static Stream CreateManaged(Stream destination, ReferenceCase fixture)
         => new GZipStream(destination, fixture.Level, leaveOpen: true);
-
-    private static Dictionary<string, string> ReadReferenceDigests()
-    {
-        using Stream source = typeof(BenchmarkVerification).Assembly.GetManifestResourceStream("reference.sha256") ??
-            throw new InvalidOperationException("The Linux benchmark reference is missing.");
-        using var reader = new StreamReader(source);
-        var digests = new Dictionary<string, string>(StringComparer.Ordinal);
-        while (reader.ReadLine() is string line)
-        {
-            string[] parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            digests.Add(Path.GetFileNameWithoutExtension(parts[1]), parts[0]);
-        }
-        return digests;
-    }
 
     private static async Task RoundTrip(byte[] source, ReferenceCase fixture, bool stock, bool async)
     {

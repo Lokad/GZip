@@ -1,4 +1,5 @@
 using System.IO.Compression;
+using System.Security.Cryptography;
 using Lokad.GZip.Verification;
 using static Lokad.GZip.Tests.EncoderTestCases;
 
@@ -18,6 +19,29 @@ public sealed class CompressedEncoderTests
             byte[] expected = File.ReadAllBytes(path + (distinctAsync ? "-async.gz" : ".gz"));
             AssertBytes(expected, await EncodeAsync(fixture, async), fixture.Name);
         }
+    }
+
+    [Fact]
+    public async Task MatchesExtendedLinuxManifest()
+    {
+        Dictionary<string, string> expected = ReferenceDigests.Read(typeof(CompressedEncoderTests).Assembly, "reference.sha256");
+        foreach (ReferenceCase fixture in ReferenceCases.Extended())
+        {
+            string syncName = fixture.Name + ".gz";
+            Assert.True(expected.Remove(syncName, out string? syncDigest), $"Missing Linux reference for {syncName}.");
+            string asyncName = fixture.Name + "-async.gz";
+            string asyncDigest = expected.Remove(asyncName, out string? distinctDigest) ? distinctDigest : syncDigest;
+
+            AssertDigest(syncName, syncDigest, await EncodeAsync(fixture, async: false));
+            AssertDigest(asyncName, asyncDigest, await EncodeAsync(fixture, async: true));
+        }
+        Assert.Empty(expected.Keys);
+    }
+
+    private static void AssertDigest(string name, string expected, byte[] encoded)
+    {
+        string actual = Convert.ToHexStringLower(SHA256.HashData(encoded));
+        Assert.True(actual == expected, $"{name} SHA-256 differs from the pinned Linux output. Expected {expected}, got {actual}.");
     }
 
     [Fact]

@@ -1,11 +1,12 @@
 # Linux gzip references
 
-Each fixture contains the complete bytes emitted by
-`System.IO.Compression.GZipStream`. The file names refer to the inputs,
-options and write schedules in [ReferenceCases.cs](../ReferenceCases.cs).
-Files with an `-async` suffix record a different result from the async
-sequence. For the other cases, capture verifies that sync and async
-produce identical bytes.
+The binary fixtures contain the complete bytes emitted by
+`System.IO.Compression.GZipStream` for the core cases. The SHA-256
+manifests cover the extended cases, including every compression level and
+strategy, window settings, and buffer boundaries. The file names refer to
+the inputs, options and write schedules in [ReferenceCases.cs](../ReferenceCases.cs).
+An `-async` entry records a different result for the async schedule.
+The tests check both schedules against the pinned Linux manifests on every OS.
 
 The captures use Microsoft's Linux x64 builds on WSL 2 Ubuntu 24.04.3 and
 an Intel Core i7-14700KF with SSE4.2, AVX2 and PCLMULQDQ exposed to the guest.
@@ -20,17 +21,20 @@ bytes. Flushing it asynchronously before disposal produces 15 bytes with
 the gzip header and a non-final empty stored block. On .NET 11 both
 sequences produce a complete 25-byte member.
 
-Regenerate into fresh directories with the pinned SDK and runtimes from
-the repository root on Linux x64. Compare the listed hashes and the set
-of file names with the committed manifest and fixtures for each target.
-Use the `--extended` option to include every compression level and
-strategy, window settings and additional buffer boundaries.
+Run the extended capture from the repository root on Linux x64 to check
+the committed manifests. The capture tool checks the runtime version and
+compression assembly source commit. Use fresh output directories for
+each run.
 
 ```sh
 dotnet build verification/Lokad.GZip.Reference -c Release
-dotnet exec --fx-version 10.0.15 verification/Lokad.GZip.Reference/bin/Release/net10.0/Lokad.GZip.Reference.dll capture /tmp/gzip-reference-10
-dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll capture /tmp/gzip-reference-11
+dotnet exec --fx-version 10.0.15 verification/Lokad.GZip.Reference/bin/Release/net10.0/Lokad.GZip.Reference.dll capture /tmp/gzip-reference-10 --extended \
+  | awk '/^[0-9a-f]+  /' | diff -u verification/goldens/net10.0.sha256 -
+dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/net11.0/Lokad.GZip.Reference.dll capture /tmp/gzip-reference-11 --extended \
+  | awk '/^[0-9a-f]+  /' | diff -u verification/goldens/net11.0.sha256 -
 ```
+
+Use `capture <directory>` to regenerate the core binary fixtures.
 
 Run the `probe` subcommand on either operating system to print a minimal
 comparison of the headers and empty-stream behaviors.
