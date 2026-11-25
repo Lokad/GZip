@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
+using System.Runtime.Intrinsics.X86;
 
 namespace Lokad.GZip;
 
@@ -40,6 +42,54 @@ internal sealed class DeflateDictionary : IDisposable
     internal int Head(int hash) => _heads[hash];
 
     internal int Previous(int position) => _previous[position & _mask];
+
+    internal static bool CanFindMinimumPrevious => Sse41.IsSupported || AdvSimd.Arm64.IsSupported;
+
+    internal int FindMinimumPrevious(int position, int count, ref int candidate)
+    {
+        int start = position & _mask;
+        int firstCount = Math.Min(count, _windowSize - start);
+        ReadOnlySpan<ushort> first = _previous.AsSpan(start, firstCount);
+        ushort minimum = Minimum(first, (ushort)candidate);
+        int offset = minimum < candidate ? first.IndexOf(minimum) : 0;
+        if (firstCount < count)
+        {
+            ReadOnlySpan<ushort> second = _previous.AsSpan(0, count - firstCount);
+            ushort afterWrap = Minimum(second, minimum);
+            if (afterWrap < minimum)
+            {
+                minimum = afterWrap;
+                offset = firstCount + second.IndexOf(minimum);
+            }
+        }
+        candidate = minimum;
+        return offset;
+    }
+
+    private static ushort Minimum(ReadOnlySpan<ushort> values, ushort limit)
+    {
+        int index = 0;
+        Vector128<ushort> lanes = Vector128.Create(limit);
+        if (Vector256.IsHardwareAccelerated)
+        {
+            Vector256<ushort> wide = Vector256.Create(limit);
+            ReadOnlySpan<Vector256<ushort>> groups = MemoryMarshal.Cast<ushort, Vector256<ushort>>(values);
+            foreach (Vector256<ushort> group in groups)
+                wide = Vector256.Min(wide, group);
+            lanes = Vector128.Min(wide.GetLower(), wide.GetUpper());
+            index = groups.Length * Vector256<ushort>.Count;
+        }
+        ReadOnlySpan<Vector128<ushort>> narrow = MemoryMarshal.Cast<ushort, Vector128<ushort>>(values[index..]);
+        foreach (Vector128<ushort> group in narrow)
+            lanes = Vector128.Min(lanes, group);
+        index += narrow.Length * Vector128<ushort>.Count;
+        ushort minimum = Sse41.IsSupported
+            ? Sse41.MinHorizontal(lanes).GetElement(0)
+            : AdvSimd.Arm64.MinAcross(lanes).ToScalar();
+        for (; index < values.Length; index++)
+            minimum = Math.Min(minimum, values[index]);
+        return minimum;
+    }
 
     internal static int UpdateHash(int hash, byte value) => ((hash << 5) ^ value) & 32767;
 

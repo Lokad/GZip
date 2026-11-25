@@ -203,6 +203,31 @@ public sealed class CompressedEncoderTests
         }
     }
 
+    [Theory]
+    [InlineData(507, 522)]
+    [InlineData(517, 527)]
+    public void KeepsTheFirstMinimumWhenPredecessorLinksWrap(int first, int second)
+    {
+        if (!DeflateDictionary.CanFindMinimumPrevious)
+            return;
+
+        const int start = 501;
+        const int count = 40;
+        const int minimum = 64;
+        using var dictionary = new DeflateDictionary(windowBits: 9, level: 2);
+        for (int position = start - 1; position < start + count; position++)
+            dictionary.InsertWord(0, position);
+        dictionary.InsertWord(1, minimum);
+        dictionary.InsertWord(1, first);
+        dictionary.InsertWord(1, minimum);
+        dictionary.InsertWord(1, second);
+
+        int candidate = 600;
+        Assert.Equal(first - start, dictionary.FindMinimumPrevious(start, count, ref candidate));
+        Assert.Equal(minimum, candidate);
+        Assert.Equal(0, dictionary.FindMinimumPrevious(start, count, ref candidate));
+    }
+
     private static bool Applies(ReferenceCase fixture)
         => fixture.Level != CompressionLevel.NoCompression && fixture.NumericLevel != 0;
 

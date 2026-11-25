@@ -259,15 +259,27 @@ internal sealed partial class CompressedEncoder
     {
         candidate = start;
         offset = 0;
-        for (int i = 0; i <= length - DeflateCodes.MinimumLength; i++)
+        int count = length - DeflateCodes.MinimumLength + 1;
+        if (DeflateDictionary.CanFindMinimumPrevious && count >= 24)
         {
-            int previous = dictionary.Previous(start + i);
-            if (previous < candidate)
+            offset = dictionary.FindMinimumPrevious(start, count, ref candidate);
+            // Each replacement decreases the position and increases its offset.
+            // Once a candidate is too far back, subsequent replacements cannot make it valid.
+            if (candidate <= baseLimit + offset)
+                return false;
+        }
+        else
+        {
+            for (int i = 0; i < count; i++)
             {
-                if (previous <= baseLimit + i)
-                    return false;
-                candidate = previous;
-                offset = i;
+                int previous = dictionary.Previous(start + i);
+                if (previous < candidate)
+                {
+                    if (previous <= baseLimit + i)
+                        return false;
+                    candidate = previous;
+                    offset = i;
+                }
             }
         }
 
