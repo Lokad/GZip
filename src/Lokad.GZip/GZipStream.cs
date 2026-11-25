@@ -432,12 +432,11 @@ public class GZipStream : Stream
         CancellationToken cancellationToken)
     {
         ValueTask pending = writer.WriteAsync(destination, buffer, cancellationToken);
-        if (!pending.IsCompletedSuccessfully)
+        if (!pending.IsCompleted)
             return AwaitWriteAsync(pending);
 
-        pending.GetAwaiter().GetResult();
         ExitOperation();
-        return ValueTask.CompletedTask;
+        return pending;
     }
 
     private async ValueTask AwaitWriteAsync(ValueTask pending)

@@ -142,6 +142,20 @@ public sealed class StreamContractTests
     }
 
     [Fact]
+    public async Task ACompletedWriteFaultReleasesTheOperationGuard()
+    {
+        byte[] input = "Lokad.GZip\n"u8.ToArray();
+        using var destination = new FailingDestination { FailWrites = true };
+        await using var gzip = new ManagedGZip(destination, CompressionLevel.Optimal, leaveOpen: true);
+        ValueTask pending = gzip.WriteAsync(input);
+        Assert.True(pending.IsFaulted);
+        destination.FailWrites = false;
+
+        await gzip.WriteAsync(ReadOnlyMemory<byte>.Empty);
+        await Assert.ThrowsAsync<IOException>(() => pending.AsTask());
+    }
+
+    [Fact]
     public void SynchronousWriteKeepsItsBuffersDuringReentrantDisposal()
     {
         using var destination = new CallbackDestination();
