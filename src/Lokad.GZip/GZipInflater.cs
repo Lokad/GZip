@@ -538,6 +538,17 @@ internal sealed class GZipInflater : IDisposable
         output = output[count..];
     }
 
+    internal bool CanReadStored(int count)
+        => _state == State.StoredData && _bits.Count == 0 && _remaining >= count;
+
+    internal void CommitStored(ReadOnlySpan<byte> bytes)
+    {
+        _remaining -= bytes.Length;
+        CommitBytes(bytes);
+        if (_remaining == 0)
+            EndBlock();
+    }
+
     private void CommitOutput(Span<byte> output, ref Span<byte> memberOutput)
     {
         int size = memberOutput.Length - output.Length;
@@ -546,6 +557,12 @@ internal sealed class GZipInflater : IDisposable
 
         ReadOnlySpan<byte> bytes = memberOutput[..size];
         memberOutput = output;
+        CommitBytes(bytes);
+    }
+
+    private void CommitBytes(ReadOnlySpan<byte> bytes)
+    {
+        int size = bytes.Length;
         _crc = Crc32.Update(_crc, bytes);
         _size = unchecked(_size + (uint)size);
         _historyCount = Math.Min(_historyCount + Math.Min(size, WindowSize), WindowSize);

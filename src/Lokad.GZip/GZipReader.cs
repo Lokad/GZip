@@ -45,6 +45,12 @@ internal sealed class GZipReader : IDisposable
     {
         while (true)
         {
+            if (CanReadStored(source, destination.Length))
+            {
+                int stored = source.Read(destination[..BufferSize]);
+                return CommitStored(destination, stored);
+            }
+
             if (TryDecode(source, destination, out int written))
                 return written;
             if (!Refill(source.Read(Input, 0, BufferSize), destination.IsEmpty) || destination.IsEmpty)
@@ -56,12 +62,32 @@ internal sealed class GZipReader : IDisposable
     {
         while (true)
         {
+            if (CanReadStored(source, destination.Length))
+            {
+                int stored = await source.ReadAsync(destination[..BufferSize], cancellationToken).ConfigureAwait(false);
+                return CommitStored(destination.Span, stored);
+            }
+
             if (TryDecode(source, destination.Span, out int written))
                 return written;
             int received = await source.ReadAsync(Input.AsMemory(0, BufferSize), cancellationToken).ConfigureAwait(false);
             if (!Refill(received, destination.IsEmpty) || destination.IsEmpty)
                 return 0;
         }
+    }
+
+    // A full refill fits inside this block, so the inflater will handle the next block or trailer.
+    private bool CanReadStored(Stream source, int count)
+        => count >= BufferSize && _offset == _length && _inflater.CanReadStored(BufferSize) &&
+            (source.GetType() == typeof(MemoryStream) || source.GetType() == typeof(FileStream));
+
+    private int CommitStored(Span<byte> destination, int received)
+    {
+        if (received == 0)
+            ValidateCompletedMember();
+        else
+            _inflater.CommitStored(destination[..received]);
+        return received;
     }
 
     private bool TryDecode(Stream source, Span<byte> destination, out int written)

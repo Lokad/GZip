@@ -6,6 +6,57 @@ namespace Lokad.GZip.Tests;
 
 public sealed class ReaderTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task StoredRefillsPreserveHistoryAndValidateTrailer(bool async, bool file)
+    {
+        const int refill = 8192;
+        byte[] stored = ReferenceCases.RandomBytes(4 * refill);
+        byte[] expected = [.. stored, .. stored.AsSpan(refill, 258)];
+        byte[] header = new byte[GZipFormat.HeaderSize];
+        GZipFormat.WriteHeader(header, extraFlags: 0);
+        byte[] trailer = new byte[GZipFormat.TrailerSize];
+        GZipFormat.WriteTrailer(trailer, Crc32.Update(Crc32.Initial, expected), (uint)expected.Length);
+
+        // A non-final stored block followed by a fixed match of length 258 and distance 24,576.
+        byte[] member = [.. header, 0, 0, 0x80, 0xff, 0x7f, .. stored, 0x1b, 0x3d, 0xff, 0x1f, 0, .. trailer];
+        using Stream source = file
+            ? new FileStream(Path.Combine(Path.GetTempPath(), $"lokad-gzip-{Guid.NewGuid():N}.gz"),
+                FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 4096,
+                FileOptions.DeleteOnClose | (async ? FileOptions.Asynchronous : FileOptions.None))
+            : new MemoryStream();
+        source.Write(member);
+        source.Position = 0;
+        using var output = new MemoryStream();
+        await CopyAsync(output);
+        Assert.Equal(expected, output.ToArray());
+        Assert.Equal((long)member.Length, source.Position);
+
+        source.Position = member.Length - GZipFormat.TrailerSize;
+        source.WriteByte((byte)(trailer[0] ^ 1));
+        source.Position = 0;
+        await Assert.ThrowsAsync<InvalidDataException>(() => CopyAsync(Stream.Null));
+
+        source.SetLength(2 * refill + 10);
+        source.Position = 0;
+        if (AppContext.TryGetSwitch("System.IO.Compression.UseStrictValidation", out bool strict) && strict)
+            await Assert.ThrowsAsync<InvalidDataException>(() => CopyAsync(Stream.Null));
+        else
+            await CopyAsync(Stream.Null);
+
+        async Task CopyAsync(Stream destination)
+        {
+            using var gzip = new GZipStream(source, CompressionMode.Decompress, leaveOpen: true);
+            if (async)
+                await gzip.CopyToAsync(destination, refill);
+            else
+                gzip.CopyTo(destination, refill);
+        }
+    }
+
     [Fact]
     public async Task ReadsShortNonSeekableStreamAsynchronously()
     {
