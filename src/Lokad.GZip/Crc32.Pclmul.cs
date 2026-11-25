@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
@@ -38,6 +39,17 @@ internal static partial class Crc32
         bytes.CopyTo(destination[(length - bytes.Length)..]);
         crc = FinishPclmul(remainder, narrow, ref bytes);
         return Update(crc, bytes);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    internal static uint FoldAndCopySuffix(uint crc, ReadOnlySpan<byte> bytes, Span<byte> destination)
+    {
+        // Both the skipped prefix and the copied suffix must contain whole folding groups.
+        Debug.Assert(bytes.Length > destination.Length && (bytes.Length & 127) == 0 &&
+            (destination.Length & 127) == 0);
+        var narrow = Vector128.Create(FoldNarrowLow, FoldNarrowHigh);
+        Vector128<ulong> remainder = FoldWide512<WithSuffix>(crc, ref bytes, narrow, destination);
+        return FinishPclmul(remainder, narrow, ref bytes);
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -87,6 +99,7 @@ internal static partial class Crc32
     // Specialize the folding loop for checksum-only and checksum-and-copy callers.
     private readonly struct WithoutCopy { }
     private readonly struct WithCopy { }
+    private readonly struct WithSuffix { }
 
     private static Vector128<ulong> FoldWide512<TCopy>(uint crc, ref ReadOnlySpan<byte> bytes, Vector128<ulong> narrow, Span<byte> destination)
         where TCopy : struct
@@ -111,7 +124,8 @@ internal static partial class Crc32
         {
             var nextFirst = Vector512.Create(bytes);
             var nextSecond = Vector512.Create(bytes[64..]);
-            if (typeof(TCopy) == typeof(WithCopy))
+            if (typeof(TCopy) == typeof(WithCopy) ||
+                (typeof(TCopy) == typeof(WithSuffix) && bytes.Length <= destination.Length))
             {
                 nextFirst.CopyTo(destination);
                 nextSecond.CopyTo(destination[64..]);

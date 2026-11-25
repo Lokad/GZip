@@ -691,6 +691,14 @@ internal sealed class GZipInflater : IDisposable
 
         int end = (_writePosition + (size & WindowMask)) & WindowMask;
         int start = _writePosition;
+        if (_state == State.StoredData && size > WindowSize && end == 0 &&
+            (size & 127) == 0 && Crc32.CanFoldAndCopy(size))
+        {
+            _crc = Crc32.FoldAndCopySuffix(_crc, bytes, _history.AsSpan(0, WindowSize));
+            _writePosition = end;
+            return;
+        }
+
         // Fold each contiguous part in order so the checksum follows the output across a wrap.
         if (size <= WindowSize && (size == WindowSize || _state == State.StoredData) && Crc32.CanFoldAndCopy(size))
         {

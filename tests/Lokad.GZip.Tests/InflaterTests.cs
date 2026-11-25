@@ -113,6 +113,36 @@ public sealed class InflaterTests
     }
 
     [Fact]
+    public void DecodesMatchIntoTheHistoryOfALargeStoredRead()
+    {
+        const int firstBlock = 48 * 1024;
+        const int secondBlock = 20 * 1024;
+        const int distance = 32768;
+        const int length = DeflateCodes.MaximumLength;
+        byte[] stored = ReferenceCases.RandomBytes(firstBlock + secondBlock);
+        byte[] expected = [.. stored, .. stored.AsSpan(stored.Length - distance, length)];
+        byte[] encoded = new byte[stored.Length + 64];
+        Span<byte> destination = encoded;
+
+        using var bits = new DeflateBits();
+        GZipFormat.WriteHeader(bits.ReserveAligned(GZipFormat.HeaderSize), extraFlags: 0);
+        DeflateBlockWriter.WriteStored(bits, stored.AsSpan(0, firstBlock), final: false);
+        bits.Drain(ref destination);
+        DeflateBlockWriter.WriteStored(bits, stored.AsSpan(firstBlock), final: false);
+        DeflateBlockWriter.StartFixed(bits, final: true);
+        DeflateBlockWriter.WriteFixedMatch(bits, length, distance);
+        DeflateBlockWriter.EndFixed(bits, final: true);
+        GZipFormat.WriteTrailer(bits.ReserveAligned(GZipFormat.TrailerSize),
+            Crc32.Update(Crc32.Initial, expected), (uint)expected.Length);
+        bits.Drain(ref destination);
+        Assert.Equal(0, bits.Pending);
+
+        var (decoded, finished) = Decode(encoded[..(encoded.Length - destination.Length)], encoded.Length, 64 * 1024);
+        Assert.True(finished);
+        Assert.Equal(expected, decoded);
+    }
+
+    [Fact]
     public async Task DecodesExtendedStockCorpus()
     {
         foreach (ReferenceCase fixture in ReferenceCases.Extended())
