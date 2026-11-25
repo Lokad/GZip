@@ -14,23 +14,25 @@ internal sealed class DeflateDictionary : IDisposable
     private readonly bool _rolling;
     private int _rollingHash;
 
-    internal DeflateDictionary(int windowBits, bool rolling)
+    internal DeflateDictionary(int windowBits, int level)
     {
-        _rolling = rolling;
-        _headCount = rolling ? 32768 : 65536;
+        _rolling = level == 9;
+        _headCount = _rolling ? 32768 : 65536;
         _windowSize = 1 << windowBits;
         _mask = _windowSize - 1;
         _heads = ArrayPool<ushort>.Shared.Rent(_headCount);
-        _previous = ArrayPool<ushort>.Shared.Rent(_windowSize);
+        // Level 1 probes the most recent position for each hash.
+        _previous = level == 1 ? [] : ArrayPool<ushort>.Shared.Rent(_windowSize);
         _heads.AsSpan(0, _headCount).Clear();
         // Rolling searches can inspect positions that were skipped by insertion.
-        if (rolling)
+        if (_rolling)
             _previous.AsSpan(0, _windowSize).Clear();
     }
 
     public void Dispose()
     {
-        ArrayPool<ushort>.Shared.Return(_previous);
+        if (_previous.Length != 0)
+            ArrayPool<ushort>.Shared.Return(_previous);
         ArrayPool<ushort>.Shared.Return(_heads);
     }
 
@@ -40,8 +42,16 @@ internal sealed class DeflateDictionary : IDisposable
 
     internal static int UpdateHash(int hash, byte value) => ((hash << 5) ^ value) & 32767;
 
-    internal void Seed(ReadOnlySpan<byte> window, int position)
-        => _rollingHash = UpdateHash(window[position], window[position + 1]);
+    private static int HashWord(ReadOnlySpan<byte> window, int position)
+        => (int)(unchecked(BinaryPrimitives.ReadUInt32LittleEndian(window[position..]) * 2654435761u) >> 16);
+
+    internal int InsertHead(ReadOnlySpan<byte> window, int position)
+    {
+        int hash = HashWord(window, position);
+        int head = _heads[hash];
+        _heads[hash] = (ushort)position;
+        return head;
+    }
 
     internal int Insert(ReadOnlySpan<byte> window, int position)
     {
@@ -53,8 +63,7 @@ internal sealed class DeflateDictionary : IDisposable
         }
         else
         {
-            uint value = BinaryPrimitives.ReadUInt32LittleEndian(window[position..]);
-            hash = (int)(unchecked(value * 2654435761u) >> 16);
+            hash = HashWord(window, position);
         }
 
         int head = _heads[hash];
@@ -72,10 +81,27 @@ internal sealed class DeflateDictionary : IDisposable
             Insert(window, position + i);
     }
 
+    internal void Reinsert(ReadOnlySpan<byte> window, int start, int length)
+    {
+        if (_previous.Length == 0)
+        {
+            for (int position = Math.Max(start - 1, 0); position < start + length; position++)
+                InsertHead(window, position);
+            return;
+        }
+
+        if (_rolling)
+            _rollingHash = UpdateHash(window[start], window[start + 1]);
+        else if (start > 0)
+            Insert(window, start - 1);
+        Insert(window, start, length);
+    }
+
     internal void Slide()
     {
         Slide(_heads.AsSpan(0, _headCount), _windowSize);
-        Slide(_previous.AsSpan(0, _windowSize), _windowSize);
+        if (_previous.Length != 0)
+            Slide(_previous.AsSpan(0, _windowSize), _windowSize);
     }
 
     private static void Slide(Span<ushort> indices, int amount)

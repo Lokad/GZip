@@ -14,7 +14,7 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
     private readonly DeflateBits _bits = new();
     private readonly DeflateBlockWriter _blocks = DeflateBlockWriter.Rent();
     private readonly DeflateDictionary? _dictionary =
-        strategy is ZLibCompressionStrategy.HuffmanOnly or ZLibCompressionStrategy.RunLengthEncoding ? null : new(windowBits, level == 9);
+        strategy is ZLibCompressionStrategy.HuffmanOnly or ZLibCompressionStrategy.RunLengthEncoding ? null : new(windowBits, level);
     private int _position;
     private int _lookahead;
     private int _blockStart;
@@ -225,12 +225,8 @@ internal sealed partial class CompressedEncoder(int level, ZLibCompressionStrate
         if (count > 0 && _dictionary is DeflateDictionary dictionary && _lookahead + _insert >= DeflateCodes.MinimumLength)
         {
             int start = _position - _insert;
-            if (_level == 9)
-                dictionary.Seed(_window, start);
-            else if (start > 0)
-                dictionary.Insert(_window, start - 1);
             int length = _insert - (_lookahead == 1 ? 1 : 0);
-            dictionary.Insert(_window, start, length);
+            dictionary.Reinsert(_window, start, length);
             _insert -= length;
         }
     }

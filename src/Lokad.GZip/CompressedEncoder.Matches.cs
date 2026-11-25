@@ -63,7 +63,7 @@ internal sealed partial class CompressedEncoder
             int distance = 0;
             if (_lookahead >= WantedLength)
             {
-                int candidate = dictionary.Insert(_window, _position);
+                int candidate = dictionary.InsertHead(_window, _position);
                 distance = _position - candidate;
                 if (distance > 0 && distance <= MaximumDistance)
                     length = CommonLength(_position, candidate);
