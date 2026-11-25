@@ -270,7 +270,12 @@ internal sealed class GZipInflater : IDisposable
 
                 case State.Symbol:
                     if (input.Length >= sizeof(ulong) && output.Length >= 2)
-                        DecodeFast(ref input, ref output, memberOutput);
+                    {
+                        if (_literals.HasMostlyEightBitCodes)
+                            DecodeFast<WithEightBitPairs>(ref input, ref output, memberOutput);
+                        else
+                            DecodeFast<WithoutEightBitPairs>(ref input, ref output, memberOutput);
+                    }
 
                     bool canResumeFast = input.Length >= sizeof(ulong) && output.Length > 2;
                     InflateTree literals = _literals;
@@ -500,8 +505,12 @@ internal sealed class GZipInflater : IDisposable
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static bool IsLiteral(ushort entry) => (entry & EndOfBlock) == 0 && entry != 0;
 
+    private readonly struct WithEightBitPairs { }
+    private readonly struct WithoutEightBitPairs { }
+
     // Decode complete root-table tokens, then let the resumable parser handle the next token.
-    private void DecodeFast(ref ReadOnlySpan<byte> input, ref Span<byte> output, scoped ReadOnlySpan<byte> memberOutput)
+    private void DecodeFast<TCodes>(ref ReadOnlySpan<byte> input, ref Span<byte> output,
+        scoped ReadOnlySpan<byte> memberOutput) where TCodes : struct
     {
         const int rootBits = InflateTree.RootBits;
         const int rootMask = (1 << rootBits) - 1;
@@ -528,6 +537,20 @@ internal sealed class GZipInflater : IDisposable
             int used = entry >> rootBits;
             if (IsLiteral(entry))
             {
+                const int eightBitLiteral = 8 << rootBits;
+                if (typeof(TCodes) == typeof(WithEightBitPairs) && (entry & 0xff00) == eightBitLiteral)
+                {
+                    ushort next = literals[(int)(bits >> 8) & rootMask];
+                    if ((next & 0xff00) == eightBitLiteral)
+                    {
+                        BinaryPrimitives.WriteUInt16LittleEndian(output[written..], (ushort)((byte)entry | ((byte)next << 8)));
+                        written += 2;
+                        bits >>= 16;
+                        available -= 16;
+                        continue;
+                    }
+                }
+
                 output[written++] = (byte)entry;
                 bits >>= used;
                 available -= used;

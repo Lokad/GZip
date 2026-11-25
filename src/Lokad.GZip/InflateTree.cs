@@ -18,6 +18,9 @@ internal sealed class InflateTree
 
     internal ReadOnlySpan<ushort> Root => _root;
 
+    // At least seven eighths of the code space is covered by eight-bit codes.
+    internal bool HasMostlyEightBitCodes => _counts[8] >= 224;
+
     internal InflateTree(int symbols) => _symbols = new ushort[symbols];
 
     internal void Build(ReadOnlySpan<byte> lengths, bool codeLengths = false, bool allowEmpty = false)
