@@ -36,25 +36,39 @@ internal sealed partial class CompressedEncoder
                 next = default;
                 continue;
             }
-            if (current.Length > 1)
+            if (useNext && current.Length == DeflateCodes.MaximumLength && current.Source == current.Start - 1 &&
+                _lookahead >= DeflateCodes.MaximumLength + MinimumLookahead)
+                current = BatchMediumRun(dictionary, current);
+
+            int nextPosition = current.Start + current.Length;
+            bool prefetch = useNext && _lookahead > MinimumLookahead &&
+                nextPosition < 2 * _windowSize - MinimumLookahead;
+            if (prefetch && current.Length == DeflateCodes.MaximumLength &&
+                _lookahead > current.Length + WantedLength)
             {
-                if (useNext && current.Length == DeflateCodes.MaximumLength && current.Source == current.Start - 1 &&
-                    _lookahead >= DeflateCodes.MaximumLength + MinimumLookahead)
-                    current = BatchMediumRun(dictionary, current);
-                InsertMediumMatch(dictionary, current, settings);
-            }
-            if (useNext && _lookahead > MinimumLookahead &&
-                current.Start + current.Length < 2 * _windowSize - MinimumLookahead)
-            {
-                _position = current.Start + current.Length;
-                next = FindMediumMatch(dictionary, settings);
-                if (current.Length > 1 && next.Length is >= WantedLength and < MaximumShiftedMatchLength)
-                    ShiftMatch(ref current, ref next);
+                // The final byte of a full match is inserted before the next position.
+                ulong words = BinaryPrimitives.ReadUInt64LittleEndian(_window.AsSpan(nextPosition - 1, sizeof(ulong)));
+                dictionary.InsertWord((uint)words, nextPosition - 1);
+                _position = nextPosition;
+                next = FindMediumMatch(dictionary, settings, (uint)(words >> 8));
                 _position = current.Start;
             }
             else
             {
-                next = default;
+                if (current.Length > 1)
+                    InsertMediumMatch(dictionary, current, settings);
+                if (prefetch)
+                {
+                    _position = nextPosition;
+                    next = FindMediumMatch(dictionary, settings);
+                    if (current.Length > 1 && next.Length is >= WantedLength and < MaximumShiftedMatchLength)
+                        ShiftMatch(ref current, ref next);
+                    _position = current.Start;
+                }
+                else
+                {
+                    next = default;
+                }
             }
 
             bool full;
@@ -83,6 +97,12 @@ internal sealed partial class CompressedEncoder
             return new(_position, 0, 1, _position);
 
         uint word = BinaryPrimitives.ReadUInt32LittleEndian(_window.AsSpan(_position));
+        return FindMediumMatch(dictionary, settings, word);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private MediumMatch FindMediumMatch(DeflateDictionary dictionary, SearchSettings settings, uint word)
+    {
         int candidate = dictionary.InsertWord(word, _position);
         if (!InRange(candidate))
             return new(_position, 0, 1, _position);
