@@ -12,10 +12,21 @@ internal struct BitReader
     {
         if (Count < count && input.Length >= sizeof(uint))
         {
-            // Requests are at most 32 bits, so the reservoir still fits in a ulong.
-            _buffer |= (ulong)BinaryPrimitives.ReadUInt32LittleEndian(input) << Count;
-            Count += 32;
-            input = input[sizeof(uint)..];
+            if (Count <= 8 && input.Length >= sizeof(ulong))
+            {
+                // Refill seven bytes, leaving room for up to eight bits already held.
+                ulong next = BinaryPrimitives.ReadUInt64LittleEndian(input) & (ulong.MaxValue >> 8);
+                _buffer |= next << Count;
+                Count += 56;
+                input = input[7..];
+            }
+            else
+            {
+                // Requests are at most 32 bits, so this refill fits at any other position.
+                _buffer |= (ulong)BinaryPrimitives.ReadUInt32LittleEndian(input) << Count;
+                Count += 32;
+                input = input[sizeof(uint)..];
+            }
             return true;
         }
 

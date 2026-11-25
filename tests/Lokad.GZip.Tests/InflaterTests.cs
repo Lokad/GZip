@@ -8,6 +8,7 @@ public sealed class InflaterTests
 {
     [Theory]
     [InlineData(1, 7)]
+    [InlineData(8, 7)]
     [InlineData(17, 1)]
     [InlineData(8192, 8192)]
     public void DecodesLinuxGoldens(int inputSize, int outputSize)
