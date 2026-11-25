@@ -62,6 +62,18 @@ internal sealed class DeflateBlockWriter : IDisposable
         return _symbolCount == MaximumSymbols;
     }
 
+    internal void AddLiterals(ReadOnlySpan<byte> values)
+    {
+        Span<Symbol> symbols = _symbols.AsSpan(_symbolCount, values.Length);
+        for (int i = 0; i < values.Length; i++)
+        {
+            byte value = values[i];
+            _literalFrequencies[value]++;
+            symbols[i] = new(value, 0);
+        }
+        _symbolCount += values.Length;
+    }
+
     internal bool AddMatch(int length, int distance)
     {
         int lengthCode = DeflateCodes.LengthCode(length);

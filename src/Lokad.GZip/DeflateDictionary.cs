@@ -44,7 +44,9 @@ internal sealed class DeflateDictionary : IDisposable
     internal static int UpdateHash(int hash, byte value) => ((hash << 5) ^ value) & 32767;
 
     private static int HashWord(ReadOnlySpan<byte> window, int position)
-        => (int)(unchecked(BinaryPrimitives.ReadUInt32LittleEndian(window[position..]) * 2654435761u) >> 16);
+        => HashWord(BinaryPrimitives.ReadUInt32LittleEndian(window[position..]));
+
+    private static int HashWord(uint word) => (int)(unchecked(word * 2654435761u) >> 16);
 
     internal int InsertHead(ReadOnlySpan<byte> window, int position)
     {
@@ -67,6 +69,14 @@ internal sealed class DeflateDictionary : IDisposable
             hash = HashWord(window, position);
         }
 
+        return InsertAtHash(hash, position);
+    }
+
+    internal int InsertWord(uint word, int position)
+        => InsertAtHash(HashWord(word), position);
+
+    private int InsertAtHash(int hash, int position)
+    {
         int head = _heads[hash];
         if (head != position)
         {

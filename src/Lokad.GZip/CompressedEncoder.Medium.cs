@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 
@@ -25,6 +26,16 @@ internal sealed partial class CompressedEncoder
             }
 
             MediumMatch current = useNext && next.Length > 0 ? next : FindMediumMatch(dictionary, settings);
+            if (useNext && current.Length == 1 && _lookahead >= MinimumLookahead + 64 && _blocks.RemainingSymbols > 1)
+                current = BatchLiterals(dictionary, current, settings);
+            if (useNext && current.Length == 1 && _blocks.RemainingSymbols > 1)
+            {
+                // With room left in the block, the next lookup can wait for the next iteration.
+                _blocks.AddLiteral(_window[current.Start]);
+                Advance(1);
+                next = default;
+                continue;
+            }
             if (current.Length > 1)
             {
                 if (useNext && current.Length == DeflateCodes.MaximumLength && current.Source == current.Start - 1 &&
@@ -68,7 +79,11 @@ internal sealed partial class CompressedEncoder
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private MediumMatch FindMediumMatch(DeflateDictionary dictionary, SearchSettings settings)
     {
-        int candidate = _lookahead >= WantedLength ? dictionary.Insert(_window, _position) : 0;
+        if (_lookahead < WantedLength)
+            return new(_position, 0, 1, _position);
+
+        uint word = BinaryPrimitives.ReadUInt32LittleEndian(_window.AsSpan(_position));
+        int candidate = dictionary.InsertWord(word, _position);
         if (!InRange(candidate))
             return new(_position, 0, 1, _position);
 
@@ -76,6 +91,44 @@ internal sealed partial class CompressedEncoder
         if (length < WantedLength || _matchStart >= _position)
             length = 1;
         return new(_position, _matchStart, length, _position);
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private MediumMatch BatchLiterals(DeflateDictionary dictionary, MediumMatch current, SearchSettings settings)
+    {
+        int start = current.Start;
+        int finalSearch = 2 * _windowSize - MinimumLookahead - 1;
+        // Stop with a prefetched token and leave its block slot and lookahead intact.
+        int limit = Math.Min(finalSearch, start + Math.Min(_lookahead - MinimumLookahead, _blocks.RemainingSymbols - 1));
+        int position = start;
+        ReadOnlySpan<byte> window = _window;
+        while (position < limit)
+        {
+            position++;
+            uint word = BinaryPrimitives.ReadUInt32LittleEndian(window[position..]);
+            int candidate = dictionary.InsertWord(word, position);
+            int oldest = Math.Max(position - MaximumDistance, 0);
+            if (candidate <= 0 || candidate < oldest || candidate >= position)
+                continue;
+
+            int remaining = settings.Chain;
+            do
+            {
+                // A medium match must have four equal bytes. A shorter candidate only uses a chain step.
+                if (word == BinaryPrimitives.ReadUInt32LittleEndian(window[candidate..]))
+                {
+                    _blocks.AddLiterals(window[start..position]);
+                    Advance(position - start);
+                    int length = LongestMatch(dictionary, candidate, settings with { Chain = remaining });
+                    return new(position, _matchStart, length, position);
+                }
+                candidate = dictionary.Previous(candidate);
+            } while (--remaining > 0 && candidate > oldest && candidate < position);
+        }
+
+        _blocks.AddLiterals(window[start..position]);
+        Advance(position - start);
+        return new(position, 0, 1, position);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]

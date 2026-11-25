@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using Lokad.GZip.Verification;
@@ -173,6 +174,30 @@ public sealed class CompressedEncoderTests
             if (!OperatingSystem.IsLinux())
                 stock[9] = 3;
             Assert.Equal(biased ? 2 : 0, (stock[10] >> 1) & 3);
+            AssertBytes(stock, await EncodeAsync(fixture, async: false), fixture.Name);
+            AssertBytes(stock, await EncodeAsync(fixture, async: true), fixture.Name);
+        }
+    }
+
+    [Fact]
+    public async Task MatchesStockWhenALiteralBlockEndsBeforeAMatch()
+    {
+        const int boundary = 16383;
+        byte[] input = ReferenceCases.RandomBytes(boundary + DefaultWindowSize);
+        input.AsSpan(123, 137).CopyTo(input.AsSpan(boundary));
+        var priorWords = new HashSet<uint>();
+        for (int position = 0; position < boundary; position++)
+            Assert.True(priorWords.Add(BinaryPrimitives.ReadUInt32LittleEndian(input.AsSpan(position))));
+        Assert.Contains(BinaryPrimitives.ReadUInt32LittleEndian(input.AsSpan(boundary)), priorWords);
+
+        foreach (int chunkSize in new[] { 8192, input.Length })
+        {
+            var fixture = new ReferenceCase($"literal block, chunk={chunkSize}", input, ChunkSize: chunkSize, NumericLevel: 6);
+            byte[] stock = await ReferenceCases.CompressAsync(fixture, ReferenceCases.CreateStockStream, async: false);
+            if (!OperatingSystem.IsLinux())
+                stock[9] = 3;
+            Assert.Equal(0, (stock[10] >> 1) & 3);
+            Assert.Equal(boundary, BinaryPrimitives.ReadUInt16LittleEndian(stock.AsSpan(11)));
             AssertBytes(stock, await EncodeAsync(fixture, async: false), fixture.Name);
             AssertBytes(stock, await EncodeAsync(fixture, async: true), fixture.Name);
         }
