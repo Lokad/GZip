@@ -754,7 +754,7 @@ internal sealed class GZipInflater : IDisposable
         }
 
         // Fold each contiguous part in order so the checksum follows the output across a wrap.
-        if (size <= WindowSize && (size >= 512 || _state == State.StoredData) && Crc32.CanFoldAndCopy(size))
+        if (size <= WindowSize && Crc32.CanFoldAndCopy(size))
         {
             int contiguous = Math.Min(size, WindowSize - start);
             FoldAndCopyHistory(bytes[..contiguous], _history.AsSpan(start));
