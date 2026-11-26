@@ -177,6 +177,53 @@ public sealed class InflaterTests
     }
 
     [Theory]
+    [InlineData("probe", 1)]
+    [InlineData("probe", 64)]
+    [InlineData("stored", 7)]
+    [InlineData("dynamic", 511)]
+    public void StopsAtTheVerifiedMemberBoundary(string name, int outputSize)
+    {
+        ReferenceCase fixture = ReferenceCases.Goldens().Single(item => item.Name == name);
+        byte[] member = ReadGolden(name);
+        byte[] following = ReadGolden("probe");
+        byte[] input = [.. member, .. following, 0xA5];
+        byte[] buffer = new byte[outputSize];
+
+        for (int split = member.Length - 16; split <= member.Length + 2; split++)
+        {
+            using var inflater = new GZipInflater(stopAtMemberEnd: true);
+            using var output = new MemoryStream();
+            int offset = 0;
+            int offered = split;
+            while (true)
+            {
+                InflateStatus status = inflater.Decode(input.AsSpan(offset, offered - offset), buffer,
+                    out int consumed, out int written);
+                offset += consumed;
+                output.Write(buffer.AsSpan(0, written));
+                if (status == InflateStatus.Done)
+                    break;
+
+                if (status == InflateStatus.NeedInput)
+                {
+                    Assert.Equal(offered, offset);
+                    Assert.True(offered < input.Length);
+                    offered = input.Length;
+                }
+                else
+                {
+                    Assert.Equal(buffer.Length, written);
+                }
+            }
+
+            Assert.Equal(member.Length, offset);
+            Assert.True(inflater.FinishedMember);
+            Assert.Equal(0, inflater.BufferedInputBytes);
+            Assert.Equal(fixture.Input, output.ToArray());
+        }
+    }
+
+    [Theory]
     [InlineData(0)]
     [InlineData(2)]
     [InlineData(3)]

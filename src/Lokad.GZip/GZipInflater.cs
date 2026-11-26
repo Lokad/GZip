@@ -12,7 +12,7 @@ internal enum InflateStatus
     Done,
 }
 
-internal sealed class GZipInflater : IDisposable
+internal sealed class GZipInflater(bool stopAtMemberEnd = false) : IDisposable
 {
     private const int WindowSize = 32768;
     private const int WindowMask = WindowSize - 1;
@@ -51,7 +51,9 @@ internal sealed class GZipInflater : IDisposable
         Match,
         Trailer,
         NextMember,
+        MemberEnd,
         Done,
+        Invalid,
     }
 
     private sealed class DynamicTrees
@@ -98,7 +100,7 @@ internal sealed class GZipInflater : IDisposable
     private int _remaining;
     private int _distance;
 
-    internal bool FinishedMember => _state is State.NextMember or State.Done;
+    internal bool FinishedMember => _state is State.NextMember or State.MemberEnd or State.Done;
     internal bool HasTrailingInput => _state == State.Done;
 
     internal int BufferedInputBytes => _bits.Count / 8;
@@ -121,11 +123,40 @@ internal sealed class GZipInflater : IDisposable
         }
         finally
         {
+            consumed = inputLength - input.Length;
+            written = outputLength - output.Length;
             CommitOutput(output, ref memberOutput);
         }
-        consumed = inputLength - input.Length;
-        written = outputLength - output.Length;
         return status;
+    }
+
+    internal OperationStatus DecodeMember(ReadOnlySpan<byte> input, Span<byte> output, bool isFinalInput,
+        out int consumed, out int written)
+    {
+        Debug.Assert(stopAtMemberEnd);
+        consumed = written = 0;
+        if (_state == State.Invalid)
+            return OperationStatus.InvalidData;
+
+        try
+        {
+            switch (Decode(input, output, out consumed, out written))
+            {
+                case InflateStatus.Done:
+                    return OperationStatus.Done;
+                case InflateStatus.NeedOutput:
+                    return OperationStatus.DestinationTooSmall;
+                case InflateStatus.NeedInput when !isFinalInput:
+                    return OperationStatus.NeedMoreData;
+            }
+        }
+        catch (InvalidDataException)
+        {
+            // Keep the counts from this call even when the member fails validation.
+        }
+
+        _state = State.Invalid;
+        return OperationStatus.InvalidData;
     }
 
     private InflateStatus Process(ref ReadOnlySpan<byte> input, ref Span<byte> output, ref Span<byte> memberOutput)
@@ -353,12 +384,20 @@ internal sealed class GZipInflater : IDisposable
 
                 case State.Trailer:
                     CommitOutput(output, ref memberOutput, keepHistory: false);
-                    if (!ReadField(ref input, 8, checksum: false))
+                    bool trailerRead = stopAtMemberEnd
+                        ? ReadMemberTrailer(ref input)
+                        : ReadField(ref input, GZipFormat.TrailerSize, checksum: false);
+                    if (!trailerRead)
                         return InflateStatus.NeedInput;
                     if (BinaryPrimitives.ReadUInt32LittleEndian(_field) != ~_crc)
                         throw new InvalidDataException("Invalid gzip data checksum.");
                     if (BinaryPrimitives.ReadUInt32LittleEndian(_field.AsSpan(4)) != _size)
                         throw new InvalidDataException("Invalid gzip uncompressed size.");
+                    if (stopAtMemberEnd)
+                    {
+                        _state = State.MemberEnd;
+                        return InflateStatus.Done;
+                    }
                     _state = State.NextMember;
                     break;
 
@@ -382,10 +421,21 @@ internal sealed class GZipInflater : IDisposable
                     break;
 
                 default:
-                    Debug.Assert(_state == State.Done);
+                    Debug.Assert(_state is State.MemberEnd or State.Done);
                     return InflateStatus.Done;
             }
         }
+    }
+
+    private bool ReadMemberTrailer(ref ReadOnlySpan<byte> input)
+    {
+        // Limit the refill to the trailer so it leaves the caller's next member in the input span.
+        int remaining = GZipFormat.TrailerSize - _fieldCount - BufferedInputBytes;
+        int available = Math.Min(input.Length, Math.Max(remaining, 0));
+        ReadOnlySpan<byte> trailer = input[..available];
+        bool complete = ReadField(ref trailer, GZipFormat.TrailerSize, checksum: false);
+        input = input[(available - trailer.Length)..];
+        return complete;
     }
 
     private bool ReadField(ref ReadOnlySpan<byte> input, int size, bool checksum)

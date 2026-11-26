@@ -4,7 +4,7 @@ using System.IO.Compression;
 namespace Lokad.GZip;
 
 /// <summary>A managed gzip stream with deterministic compression.</summary>
-public class GZipStream : Stream
+public partial class GZipStream : Stream
 {
     private readonly bool _leaveOpen;
     private Stream? _baseStream;
@@ -50,14 +50,7 @@ public class GZipStream : Stream
     public GZipStream(Stream stream, CompressionLevel compressionLevel, bool leaveOpen)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        int level = compressionLevel switch
-        {
-            CompressionLevel.Optimal => 6,
-            CompressionLevel.Fastest => 1,
-            CompressionLevel.NoCompression => 0,
-            CompressionLevel.SmallestSize => 9,
-            _ => throw new ArgumentOutOfRangeException(nameof(compressionLevel)),
-        };
+        int level = ResolveLevel(compressionLevel);
         _writer = CreateWriter(stream, level, ZLibCompressionStrategy.Default, 15);
         _baseStream = stream;
         _leaveOpen = leaveOpen;
@@ -67,14 +60,8 @@ public class GZipStream : Stream
     public GZipStream(Stream stream, ZLibCompressionOptions compressionOptions, bool leaveOpen = false)
     {
         ArgumentNullException.ThrowIfNull(stream);
-        ArgumentNullException.ThrowIfNull(compressionOptions);
-        int window = 15;
-#if NET11_0_OR_GREATER
-        if (compressionOptions.WindowLog2 >= 0)
-            window = Math.Max(compressionOptions.WindowLog2, 9);
-#endif
-        int level = compressionOptions.CompressionLevel < 0 ? 6 : compressionOptions.CompressionLevel;
-        _writer = CreateWriter(stream, level, compressionOptions.CompressionStrategy, window);
+        var (level, strategy, window) = ResolveOptions(compressionOptions);
+        _writer = CreateWriter(stream, level, strategy, window);
         _baseStream = stream;
         _leaveOpen = leaveOpen;
     }
@@ -85,6 +72,7 @@ public class GZipStream : Stream
     {
         get
         {
+            ThrowIfSpanOnly();
             Stream? stream = _baseStream;
             ObjectDisposedException.ThrowIf(stream is null, this);
             return stream;
@@ -93,7 +81,14 @@ public class GZipStream : Stream
 #else
     /// <summary>Gets the underlying stream.</summary>
     /// <remarks>Returns <see langword="null"/> after disposal on .NET 10.</remarks>
-    public Stream BaseStream => _baseStream!;
+    public Stream BaseStream
+    {
+        get
+        {
+            ThrowIfSpanOnly();
+            return _baseStream!;
+        }
+    }
 #endif
 
     /// <inheritdoc/>
@@ -294,6 +289,12 @@ public class GZipStream : Stream
         {
             if (!disposing)
                 return;
+            if (_spanOnly)
+            {
+                DisposeSpan();
+                return;
+            }
+
             Stream? stream = DetachStream();
             if (stream is null)
                 return;
@@ -332,6 +333,12 @@ public class GZipStream : Stream
     {
         if (GetType() != typeof(GZipStream))
             return base.DisposeAsync();
+        if (_spanOnly)
+        {
+            DisposeSpan();
+            return ValueTask.CompletedTask;
+        }
+
         Stream? stream = DetachStream();
         if (stream is null)
             return ValueTask.CompletedTask;
@@ -347,7 +354,31 @@ public class GZipStream : Stream
     {
         if (!stream.CanWrite)
             throw new ArgumentException("The underlying stream must be writable.", nameof(stream));
-        return new(level == 0 ? new StoredEncoder(window) : new CompressedEncoder(level, strategy, window));
+        return new(CreateEncoder(level, strategy, window));
+    }
+
+    private static IDeflateEncoder CreateEncoder(int level, ZLibCompressionStrategy strategy, int window)
+        => level == 0 ? new StoredEncoder(window) : new CompressedEncoder(level, strategy, window);
+
+    private static int ResolveLevel(CompressionLevel compressionLevel) => compressionLevel switch
+    {
+        CompressionLevel.Optimal => 6,
+        CompressionLevel.Fastest => 1,
+        CompressionLevel.NoCompression => 0,
+        CompressionLevel.SmallestSize => 9,
+        _ => throw new ArgumentOutOfRangeException(nameof(compressionLevel)),
+    };
+
+    private static (int Level, ZLibCompressionStrategy Strategy, int Window) ResolveOptions(ZLibCompressionOptions compressionOptions)
+    {
+        ArgumentNullException.ThrowIfNull(compressionOptions);
+        int window = 15;
+#if NET11_0_OR_GREATER
+        if (compressionOptions.WindowLog2 >= 0)
+            window = Math.Max(compressionOptions.WindowLog2, 9);
+#endif
+        int level = compressionOptions.CompressionLevel < 0 ? 6 : compressionOptions.CompressionLevel;
+        return (level, compressionOptions.CompressionStrategy, window);
     }
 
     private GZipReader Reader => _reader ?? throw new InvalidOperationException("The gzip stream is open for compression.");
@@ -546,6 +577,7 @@ public class GZipStream : Stream
             return stream;
 
         ExitOperation();
+        ThrowIfSpanOnly();
         throw new ObjectDisposedException(GetType().FullName);
     }
 
@@ -570,7 +602,8 @@ public class GZipStream : Stream
         }
     }
 
-    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_baseStream is null, this);
+    private void ThrowIfDisposed()
+        => ObjectDisposedException.ThrowIf(_baseStream is null && (!_spanOnly || !HasSpanCodec), this);
 
     private void ExitOperation() => Volatile.Write(ref _operation, 0);
 }

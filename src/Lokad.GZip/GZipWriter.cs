@@ -5,7 +5,7 @@ namespace Lokad.GZip;
 
 internal sealed class GZipWriter(IDeflateEncoder encoder) : IDisposable
 {
-    private const int BufferSize = 8192;
+    internal const int BufferSize = 8192;
     private readonly byte[] _output = ArrayPool<byte>.Shared.Rent(BufferSize);
 #if !NET11_0_OR_GREATER
     private bool _wroteBytes;

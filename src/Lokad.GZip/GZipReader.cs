@@ -2,13 +2,13 @@ using System.Buffers;
 
 namespace Lokad.GZip;
 
-internal sealed class GZipReader : IDisposable
+internal sealed class GZipReader(bool stopAtMemberEnd = false) : IDisposable
 {
     private const int BufferSize = 8192;
     private static readonly bool UseStrictValidation =
         AppContext.TryGetSwitch("System.IO.Compression.UseStrictValidation", out bool strict) && strict;
 
-    private readonly GZipInflater _inflater = new();
+    private readonly GZipInflater _inflater = new(stopAtMemberEnd);
     private byte[]? _input;
     private int _offset;
     private int _length;
@@ -18,6 +18,10 @@ internal sealed class GZipReader : IDisposable
 #endif
 
     private byte[] Input => _input ??= ArrayPool<byte>.Shared.Rent(BufferSize);
+
+    internal OperationStatus DecodeMember(ReadOnlySpan<byte> input, Span<byte> output, bool isFinalInput,
+        out int consumed, out int written)
+        => _inflater.DecodeMember(input, output, isFinalInput, out consumed, out written);
 
     internal bool CanCopyFromMemory(MemoryStream source)
         => _offset == _length && source.Length - source.Position >= BufferSize;
