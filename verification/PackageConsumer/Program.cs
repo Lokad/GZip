@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -88,7 +89,39 @@ using var source = new GZipStream(buffer, CompressionMode.Decompress);
 using var output = new MemoryStream();
 await source.CopyToAsync(output);
 Require(output.ToArray().AsSpan().SequenceEqual("Lokad.GZip\n"u8), "Packed decompression differs from the input.");
+VerifyCallerBuffers("Lokad.GZip\n"u8, Convert.FromHexString(expected));
 Console.WriteLine($"{framework} {RuntimeInformation.FrameworkDescription} {RuntimeInformation.OSDescription} package consumer passed.");
+
+static void VerifyCallerBuffers(ReadOnlySpan<byte> payload, ReadOnlySpan<byte> reference)
+{
+    byte[] member = new byte[reference.Length + 1];
+    Span<byte> encoded = member.AsSpan(0, reference.Length);
+    using var encoder = GZipStream.CreateSpanEncoder();
+    OperationStatus status = encoder.Write(payload, encoded, out int consumed, out int encodedBytes);
+    Require(status == OperationStatus.Done && consumed == payload.Length, "Packed span encoder did not accept the payload.");
+    do
+    {
+        Span<byte> destination = encoded[encodedBytes..];
+        status = encoder.Finish(destination[..Math.Min(destination.Length, 3)], out int written);
+        Require(status == OperationStatus.Done || (status == OperationStatus.DestinationTooSmall && written > 0),
+            "Packed span encoder did not complete the member.");
+        encodedBytes += written;
+    } while (status != OperationStatus.Done);
+    Require(encodedBytes == reference.Length && encoded.SequenceEqual(reference),
+        "Packed span compression differs from the Linux reference.");
+
+    member[^1] = 0xA5;
+    Span<byte> decoded = stackalloc byte[payload.Length];
+    using var decoder = GZipStream.CreateSpanDecoder();
+    status = decoder.Read(member, decoded[..2], out consumed, out int decodedBytes, isFinalInput: true);
+    Require(status == OperationStatus.DestinationTooSmall && decodedBytes == 2,
+        "Packed span decoder did not request more output space.");
+    status = decoder.Read(member.AsSpan(consumed), decoded[decodedBytes..], out int consumedTail, out int decodedTail,
+        isFinalInput: true);
+    Require(status == OperationStatus.Done && consumed + consumedTail == reference.Length &&
+        decodedBytes + decodedTail == decoded.Length && decoded.SequenceEqual(payload),
+        "Packed span decoder did not recover the payload and preserve the member boundary.");
+}
 
 static void Require(bool condition, string message)
 {
