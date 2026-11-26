@@ -32,6 +32,7 @@ internal sealed partial class CompressedEncoder
         _ => new(32, 258, 258, 4096),
     };
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private bool EncodeQuick(DeflateDictionary dictionary, ref ReadOnlySpan<byte> input, ref Span<byte> output, DeflateOperation operation)
     {
         bool final = operation == DeflateOperation.Finish;
@@ -135,6 +136,7 @@ internal sealed partial class CompressedEncoder
         return true;
     }
 
+    [MethodImpl(MethodImplOptions.NoInlining)]
     private bool EncodeSlow(DeflateDictionary dictionary, ref ReadOnlySpan<byte> input, ref Span<byte> output, DeflateOperation operation)
     {
         SearchSettings settings = Settings;
