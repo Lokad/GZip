@@ -63,7 +63,6 @@ public sealed class StreamContractTests
         }
 
         Assert.False(stream.CanWrite);
-        Assert.Throws<ObjectDisposedException>(() => stream.BaseStream);
         Assert.True(storage.CanWrite);
         storage.Position = 0;
         using (var stock = new StockGZip(storage, CompressionMode.Decompress, leaveOpen: true))
@@ -87,6 +86,49 @@ public sealed class StreamContractTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task BaseStreamMatchesStockAfterDisposal(bool async)
+    {
+        using var input = new MemoryStream();
+        using var managed = new ManagedGZip(input, CompressionMode.Decompress, leaveOpen: true);
+        using var stock = new StockGZip(input, CompressionMode.Decompress, leaveOpen: true);
+        Assert.Same(stock.BaseStream, managed.BaseStream);
+        Assert.Same(input, managed.BaseStream);
+
+        if (async)
+        {
+            await managed.DisposeAsync();
+            await stock.DisposeAsync();
+        }
+        else
+        {
+            managed.Dispose();
+            stock.Dispose();
+        }
+
+#if NET11_0_OR_GREATER
+        Assert.Throws<ObjectDisposedException>(() => stock.BaseStream);
+#else
+        Assert.Null(stock.BaseStream);
+#endif
+        AssertDisposedBaseStream(managed);
+    }
+
+    [Fact]
+    public void DisposedArrayOperationsThrowBeforeValidatingArguments()
+    {
+        using var input = new MemoryStream();
+        var gzip = new ManagedGZip(input, CompressionMode.Decompress, leaveOpen: true);
+        gzip.Dispose();
+
+        Assert.Throws<ObjectDisposedException>(() => gzip.Read([], -1, 0));
+        Assert.Throws<ObjectDisposedException>(() => gzip.Write([], -1, 0));
+        Assert.Throws<ObjectDisposedException>(() => { _ = gzip.ReadAsync([], -1, 0, CancellationToken.None); });
+        Assert.Throws<ObjectDisposedException>(() => { _ = gzip.WriteAsync([], -1, 0, CancellationToken.None); });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task DetachesAndHonorsOwnershipAfterFinishFails(bool leaveOpen)
     {
         using var destination = new FailingDestination();
@@ -97,8 +139,17 @@ public sealed class StreamContractTests
         await Assert.ThrowsAsync<IOException>(() => gzip.DisposeAsync().AsTask());
         Assert.Equal(!leaveOpen, destination.Disposed);
         Assert.False(gzip.CanWrite);
-        Assert.Throws<ObjectDisposedException>(() => gzip.BaseStream);
+        AssertDisposedBaseStream(gzip);
         await gzip.DisposeAsync();
+    }
+
+    private static void AssertDisposedBaseStream(ManagedGZip gzip)
+    {
+#if NET11_0_OR_GREATER
+        Assert.Throws<ObjectDisposedException>(() => gzip.BaseStream);
+#else
+        Assert.Null(gzip.BaseStream);
+#endif
     }
 
     [Fact]
@@ -137,6 +188,56 @@ public sealed class StreamContractTests
 
         await gzip.WriteAsync(ReadOnlyMemory<byte>.Empty);
         await gzip.DisposeAsync();
+        byte[] expected = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", "probe.gz"));
+        Assert.Equal(expected, destination.ToArray());
+    }
+
+    [Fact]
+    public async Task CanceledDestinationFlushReleasesTheOperationGuard()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var destination = new DeferredFlushStream();
+        using var gzip = new ManagedGZip(destination, CompressionLevel.Optimal, leaveOpen: true);
+        gzip.Write("Lokad.GZip\n"u8);
+
+        Task pending = gzip.FlushAsync(cancellation.Token);
+        try
+        {
+            Assert.False(pending.IsCompleted);
+            Assert.Throws<InvalidOperationException>(() => { _ = gzip.FlushAsync(); });
+            cancellation.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        }
+        finally
+        {
+            destination.Release.TrySetResult();
+        }
+        await gzip.FlushAsync();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PendingFinishDefersDestinationDisposal(bool leaveOpen)
+    {
+        using var destination = new DeferredWriteStream();
+        var gzip = new ManagedGZip(destination, CompressionLevel.Optimal, leaveOpen);
+        gzip.Write("Lokad.GZip\n"u8);
+
+        Task pending = gzip.DisposeAsync().AsTask();
+        try
+        {
+            Assert.False(pending.IsCompleted);
+            Assert.True(destination.CanWrite);
+            AssertDisposedBaseStream(gzip);
+            Assert.Throws<ObjectDisposedException>(() => gzip.WriteByte(1));
+        }
+        finally
+        {
+            destination.Release.TrySetResult();
+            await pending;
+        }
+        Assert.Equal(leaveOpen, destination.CanWrite);
         byte[] expected = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", "probe.gz"));
         Assert.Equal(expected, destination.ToArray());
     }
@@ -200,6 +301,14 @@ public sealed class StreamContractTests
             await Release.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             await base.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    private sealed class DeferredFlushStream : MemoryStream
+    {
+        internal TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override Task FlushAsync(CancellationToken cancellationToken)
+            => Release.Task.WaitAsync(cancellationToken);
     }
 
     private sealed class FailingDestination : MemoryStream

@@ -130,7 +130,24 @@ internal sealed class GZipMemoryCopy : Stream
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
         => WriteAsync(buffer.AsMemory(offset, count), cancellationToken).AsTask();
 
-    public override async ValueTask WriteAsync(ReadOnlyMemory<byte> input, CancellationToken cancellationToken = default)
+    public override ValueTask WriteAsync(ReadOnlyMemory<byte> input, CancellationToken cancellationToken = default)
+    {
+        if (cancellationToken.CanBeCanceled)
+            return WriteCancellableAsync(input, cancellationToken);
+
+        // Rent accepts only exact MemoryStream destinations.
+        try
+        {
+            Write(input.Span);
+            return ValueTask.CompletedTask;
+        }
+        catch (Exception error)
+        {
+            return ValueTask.FromException(error);
+        }
+    }
+
+    private async ValueTask WriteCancellableAsync(ReadOnlyMemory<byte> input, CancellationToken cancellationToken)
     {
         if (!CanDecode(input.Span))
             return;

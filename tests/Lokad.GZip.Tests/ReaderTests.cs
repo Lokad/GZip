@@ -45,43 +45,45 @@ public sealed class ReaderTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MemoryCopyCanResumeAfterDestinationFailure(bool async)
+    [InlineData(false, 32768, false)]
+    [InlineData(true, 32768, false)]
+    [InlineData(false, 4096, false)]
+    [InlineData(true, 4096, false)]
+    [InlineData(false, 32768, true)]
+    [InlineData(true, 32768, true)]
+    public async Task CopyResumesAtStockPositionAfterDestinationFailure(bool async, int inputSize, bool customDestination)
     {
         const int bufferSize = 257;
-        byte[] data = ReferenceCases.RandomBytes(32768);
-        byte[] member = CreateStoredMember(data);
+        byte[] member = CreateStoredMember(ReferenceCases.RandomBytes(inputSize));
         using var source = new MemoryStream(member, writable: false);
         using var reader = new GZipStream(source, CompressionMode.Decompress);
-        using var failing = new MemoryStream(Array.Empty<byte>(), 0, 0, writable: true, publiclyVisible: true);
-
-        if (async)
-            await Assert.ThrowsAsync<NotSupportedException>(() => reader.CopyToAsync(failing, bufferSize));
-        else
-            Assert.Throws<NotSupportedException>(() => reader.CopyTo(failing, bufferSize));
-
-        using var output = new MemoryStream();
-        if (async)
-            await reader.CopyToAsync(output, bufferSize);
-        else
-            reader.CopyTo(output, bufferSize);
         using var stockSource = new MemoryStream(member, writable: false);
         using var stock = new StockGZip(stockSource, CompressionMode.Decompress);
-        using var stockFailing = new MemoryStream(Array.Empty<byte>(), 0, 0, writable: true, publiclyVisible: true);
-        using var stockOutput = new MemoryStream();
-        if (async)
+
+        byte[] expected = await ResumeAsync(stock);
+        Assert.Equal(inputSize - 512, expected.Length);
+        Assert.Equal(expected, await ResumeAsync(reader));
+
+        async Task<byte[]> ResumeAsync(Stream decoder)
         {
-            await Assert.ThrowsAsync<NotSupportedException>(() => stock.CopyToAsync(stockFailing, bufferSize));
-            await stock.CopyToAsync(stockOutput, bufferSize);
+            using MemoryStream failing = customDestination ? new BoundedDestination() :
+                new MemoryStream([], 0, 0, writable: true, publiclyVisible: true);
+            using var output = new MemoryStream();
+            if (async)
+            {
+                await Assert.ThrowsAsync<NotSupportedException>(() => decoder.CopyToAsync(failing, bufferSize));
+                await decoder.CopyToAsync(output, bufferSize);
+            }
+            else
+            {
+                Assert.Throws<NotSupportedException>(() => decoder.CopyTo(failing, bufferSize));
+                decoder.CopyTo(output, bufferSize);
+            }
+            return output.ToArray();
         }
-        else
-        {
-            Assert.Throws<NotSupportedException>(() => stock.CopyTo(stockFailing, bufferSize));
-            stock.CopyTo(stockOutput, bufferSize);
-        }
-        Assert.Equal(stockOutput.ToArray(), output.ToArray());
     }
+
+    private sealed class BoundedDestination() : MemoryStream([], writable: true);
 
     [Fact]
     public void MemoryCopyFallsBackForSharedStorage()
@@ -97,6 +99,7 @@ public sealed class ReaderTests
     }
 
     [Theory]
+    [Trait("Category", "StrictValidation")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task MemoryCopyChecksTruncatedTrailerWithStrictValidation(bool async)
@@ -132,6 +135,7 @@ public sealed class ReaderTests
     }
 
     [Theory]
+    [Trait("Category", "StrictValidation")]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -233,6 +237,7 @@ public sealed class ReaderTests
     }
 
     [Theory]
+    [Trait("Category", "StrictValidation")]
     [InlineData(false)]
     [InlineData(true)]
     public async Task ReadingAndCopyingAnEmptySourceMatchesStockValidation(bool async)

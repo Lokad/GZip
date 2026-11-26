@@ -79,6 +79,7 @@ public class GZipStream : Stream
         _leaveOpen = leaveOpen;
     }
 
+#if NET11_0_OR_GREATER
     /// <summary>Gets the underlying stream.</summary>
     public Stream BaseStream
     {
@@ -89,6 +90,11 @@ public class GZipStream : Stream
             return stream;
         }
     }
+#else
+    /// <summary>Gets the underlying stream.</summary>
+    /// <remarks>Returns <see langword="null"/> after disposal on .NET 10.</remarks>
+    public Stream BaseStream => _baseStream!;
+#endif
 
     /// <inheritdoc/>
     public override bool CanRead => _reader is not null && _baseStream?.CanRead == true;
@@ -118,7 +124,7 @@ public class GZipStream : Stream
     /// <inheritdoc/>
     public override int Read(byte[] buffer, int offset, int count)
     {
-        _ = BaseStream;
+        ThrowIfDisposed();
         ValidateBufferArguments(buffer, offset, count);
         return ReadCore(buffer.AsSpan(offset, count));
     }
@@ -141,7 +147,7 @@ public class GZipStream : Stream
     /// <inheritdoc/>
     public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
-        _ = BaseStream;
+        ThrowIfDisposed();
         ValidateBufferArguments(buffer, offset, count);
         return ReadAsyncCore(buffer.AsMemory(offset, count), cancellationToken).AsTask();
     }
@@ -155,7 +161,7 @@ public class GZipStream : Stream
     /// <inheritdoc/>
     public override void Write(byte[] buffer, int offset, int count)
     {
-        _ = BaseStream;
+        ThrowIfDisposed();
         ValidateBufferArguments(buffer, offset, count);
         WriteCore(buffer.AsSpan(offset, count));
     }
@@ -183,7 +189,7 @@ public class GZipStream : Stream
     /// <inheritdoc/>
     public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
     {
-        _ = BaseStream;
+        ThrowIfDisposed();
         ValidateBufferArguments(buffer, offset, count);
         return WriteAsyncCore(buffer.AsMemory(offset, count), cancellationToken).AsTask();
     }
@@ -243,7 +249,7 @@ public class GZipStream : Stream
                 return;
 
             int count;
-            while ((count = reader.Read(source, buffer.AsSpan(0, bufferSize))) != 0)
+            while ((count = reader.Read(source, buffer)) != 0)
                 destination.Write(buffer, 0, count);
             if (reader.ShouldDrainTrailingInput(source))
                 source.CopyTo(Stream.Null, bufferSize);
@@ -474,7 +480,7 @@ public class GZipStream : Stream
                 return;
 
             int count;
-            while ((count = await reader.ReadAsync(source, buffer.AsMemory(0, bufferSize), cancellationToken).ConfigureAwait(false)) != 0)
+            while ((count = await reader.ReadAsync(source, buffer, cancellationToken).ConfigureAwait(false)) != 0)
                 await destination.WriteAsync(buffer.AsMemory(0, count), cancellationToken).ConfigureAwait(false);
             if (reader.ShouldDrainTrailingInput(source))
                 await source.CopyToAsync(Stream.Null, bufferSize, cancellationToken).ConfigureAwait(false);
@@ -559,10 +565,12 @@ public class GZipStream : Stream
     {
         if (Interlocked.CompareExchange(ref _operation, 1, 0) != 0)
         {
-            _ = BaseStream;
+            ThrowIfDisposed();
             throw new InvalidOperationException("An operation is already active on the gzip stream.");
         }
     }
+
+    private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(_baseStream is null, this);
 
     private void ExitOperation() => Volatile.Write(ref _operation, 0);
 }
