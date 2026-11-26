@@ -5,14 +5,15 @@ using Lokad.GZip.Verification;
 
 if (args is ["--smoke"])
 {
+    BenchmarkWorkload fileWorkload = BenchmarkWorkloads.All.Single(workload => workload.Name == FileGZipBenchmarks.WorkloadName);
     foreach (BenchmarkWorkload workload in BenchmarkWorkloads.All)
     {
-        byte[] encoded = BenchmarkVerification.Check(workload.Generate());
+        ReferenceCase fixture = workload.Generate();
+        byte[] encoded = BenchmarkVerification.Check(fixture);
         Console.WriteLine($"{workload.Name} {workload.Size:N0} bytes in, {encoded.Length:N0} gzip bytes");
+        if (workload == fileWorkload)
+            new FileGZipBenchmarks().Verify(fixture, encoded);
     }
-    var files = new FileGZipBenchmarks();
-    files.Prepare();
-    files.Cleanup();
     Console.WriteLine("File-stream compression and decompression verified.");
     return 0;
 }

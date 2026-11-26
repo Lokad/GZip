@@ -12,7 +12,7 @@ namespace Lokad.GZip.Benchmarks;
 [Config(typeof(ThroughputConfig))]
 public class FileGZipBenchmarks
 {
-    private const string WorkloadName = "large-mixed-optimal";
+    internal const string WorkloadName = "large-mixed-optimal";
 
     private CompressionLevel _level;
     private int _bufferSize;
@@ -29,7 +29,11 @@ public class FileGZipBenchmarks
     public void Prepare()
     {
         ReferenceCase fixture = BenchmarkWorkloads.All.Single(workload => workload.Name == Workload).Generate();
-        byte[] reference = BenchmarkVerification.Check(fixture);
+        PrepareFiles(fixture, BenchmarkVerification.Check(fixture));
+    }
+
+    private void PrepareFiles(ReferenceCase fixture, byte[] reference)
+    {
         _level = fixture.Level;
         _bufferSize = fixture.ChunkSize;
         _directory = Directory.CreateTempSubdirectory("lokad-gzip-bench-");
@@ -42,28 +46,41 @@ public class FileGZipBenchmarks
         {
             File.WriteAllBytes(_input, fixture.Input);
             File.WriteAllBytes(_encoded, reference);
-            ManagedCompress();
-            if (!reference.AsSpan().SequenceEqual(File.ReadAllBytes(_output)))
-                throw new InvalidDataException("File compression differs from the Linux reference.");
-
-            StockCompress();
-            using (var stockOutput = new GZipStream(File.OpenRead(_output), CompressionMode.Decompress))
-            {
-                using var stockDecoded = new MemoryStream(fixture.Input.Length);
-                stockOutput.CopyTo(stockDecoded, _bufferSize);
-                if (!stockDecoded.GetBuffer().AsSpan(0, (int)stockDecoded.Length).SequenceEqual(fixture.Input))
-                    throw new InvalidDataException("Stock file compression did not round trip.");
-            }
-
-            StockDecompress();
-            VerifyDecoded(fixture.Input);
-            ManagedDecompress();
-            VerifyDecoded(fixture.Input);
         }
         catch
         {
             Cleanup();
             throw;
+        }
+    }
+
+    internal void Verify(ReferenceCase fixture, byte[] reference)
+    {
+        PrepareFiles(fixture, reference);
+        try
+        {
+            ManagedCompress();
+            VerifyCompressed(fixture, reference, stock: false);
+            ManagedCompressAsync().GetAwaiter().GetResult();
+            VerifyCompressed(fixture, reference, stock: false);
+
+            StockCompress();
+            VerifyCompressed(fixture, reference, stock: true);
+            StockCompressAsync().GetAwaiter().GetResult();
+            VerifyCompressed(fixture, reference, stock: true);
+
+            StockDecompress();
+            VerifyDecoded(fixture.Input);
+            ManagedDecompress();
+            VerifyDecoded(fixture.Input);
+            StockDecompressAsync().GetAwaiter().GetResult();
+            VerifyDecoded(fixture.Input);
+            ManagedDecompressAsync().GetAwaiter().GetResult();
+            VerifyDecoded(fixture.Input);
+        }
+        finally
+        {
+            Cleanup();
         }
     }
 
@@ -86,21 +103,40 @@ public class FileGZipBenchmarks
     [Benchmark, BenchmarkCategory("FileCompress")]
     public long ManagedCompress() => Compress(stock: false);
 
+    [Benchmark(Baseline = true), BenchmarkCategory("FileCompressAsync")]
+    public Task<long> StockCompressAsync() => CompressAsync(stock: true);
+
+    [Benchmark, BenchmarkCategory("FileCompressAsync")]
+    public Task<long> ManagedCompressAsync() => CompressAsync(stock: false);
+
     [Benchmark(Baseline = true), BenchmarkCategory("FileDecompress")]
     public long StockDecompress() => Decompress(stock: true);
 
     [Benchmark, BenchmarkCategory("FileDecompress")]
     public long ManagedDecompress() => Decompress(stock: false);
 
+    [Benchmark(Baseline = true), BenchmarkCategory("FileDecompressAsync")]
+    public Task<long> StockDecompressAsync() => DecompressAsync(stock: true);
+
+    [Benchmark, BenchmarkCategory("FileDecompressAsync")]
+    public Task<long> ManagedDecompressAsync() => DecompressAsync(stock: false);
+
     private long Compress(bool stock)
     {
         using var input = File.OpenRead(_input);
         using var output = File.Create(_output);
-        using (Stream encoder = stock ? new StockGZip(output, _level, leaveOpen: true) :
-            new GZipStream(output, _level, leaveOpen: true))
-        {
+        using (Stream encoder = OpenEncoder(output, stock))
             input.CopyTo(encoder, _bufferSize);
-        }
+        return output.Length;
+    }
+
+    private async Task<long> CompressAsync(bool stock)
+    {
+        await using FileStream input = OpenAsyncInput(_input);
+        await using FileStream output = CreateAsyncOutput(_output);
+        Stream encoder = OpenEncoder(output, stock);
+        await using (encoder.ConfigureAwait(false))
+            await input.CopyToAsync(encoder, _bufferSize).ConfigureAwait(false);
         return output.Length;
     }
 
@@ -108,10 +144,49 @@ public class FileGZipBenchmarks
     {
         using var input = File.OpenRead(_encoded);
         using var output = File.Create(_decoded);
-        using Stream decoder = stock ? new StockGZip(input, CompressionMode.Decompress, leaveOpen: true) :
-            new GZipStream(input, CompressionMode.Decompress, leaveOpen: true);
+        using Stream decoder = OpenDecoder(input, stock);
         decoder.CopyTo(output, _bufferSize);
         return output.Length;
+    }
+
+    private async Task<long> DecompressAsync(bool stock)
+    {
+        await using FileStream input = OpenAsyncInput(_encoded);
+        await using FileStream output = CreateAsyncOutput(_decoded);
+        Stream decoder = OpenDecoder(input, stock);
+        await using (decoder.ConfigureAwait(false))
+            await decoder.CopyToAsync(output, _bufferSize).ConfigureAwait(false);
+        return output.Length;
+    }
+
+    private Stream OpenEncoder(Stream output, bool stock)
+        => stock ? new StockGZip(output, _level, leaveOpen: true) : new GZipStream(output, _level, leaveOpen: true);
+
+    private static Stream OpenDecoder(Stream input, bool stock)
+        => stock ? new StockGZip(input, CompressionMode.Decompress, leaveOpen: true) :
+            new GZipStream(input, CompressionMode.Decompress, leaveOpen: true);
+
+    private static FileStream OpenAsyncInput(string path)
+        => new(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.Asynchronous);
+
+    private static FileStream CreateAsyncOutput(string path)
+        => new(path, FileMode.Create, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.Asynchronous);
+
+    private void VerifyCompressed(ReferenceCase fixture, byte[] reference, bool stock)
+    {
+        byte[] compressed = File.ReadAllBytes(_output);
+        if (!stock || OperatingSystem.IsLinux())
+        {
+            if (!reference.AsSpan().SequenceEqual(compressed))
+                throw new InvalidDataException("File compression differs from the Linux reference.");
+            return;
+        }
+
+        using var decoder = new GZipStream(new MemoryStream(compressed, writable: false), CompressionMode.Decompress);
+        using var decoded = new MemoryStream(fixture.Input.Length);
+        decoder.CopyTo(decoded, _bufferSize);
+        if (!decoded.GetBuffer().AsSpan(0, (int)decoded.Length).SequenceEqual(fixture.Input))
+            throw new InvalidDataException("Stock file compression did not round trip.");
     }
 
     private void VerifyDecoded(ReadOnlySpan<byte> expected)
