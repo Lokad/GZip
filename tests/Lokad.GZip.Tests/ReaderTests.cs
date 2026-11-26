@@ -51,7 +51,8 @@ public sealed class ReaderTests
     {
         const int bufferSize = 257;
         byte[] data = ReferenceCases.RandomBytes(32768);
-        using var source = new MemoryStream(CreateStoredMember(data), writable: false);
+        byte[] member = CreateStoredMember(data);
+        using var source = new MemoryStream(member, writable: false);
         using var reader = new GZipStream(source, CompressionMode.Decompress);
         using var failing = new MemoryStream(Array.Empty<byte>(), 0, 0, writable: true, publiclyVisible: true);
 
@@ -65,7 +66,21 @@ public sealed class ReaderTests
             await reader.CopyToAsync(output, bufferSize);
         else
             reader.CopyTo(output, bufferSize);
-        Assert.Equal(data[bufferSize..], output.ToArray());
+        using var stockSource = new MemoryStream(member, writable: false);
+        using var stock = new StockGZip(stockSource, CompressionMode.Decompress);
+        using var stockFailing = new MemoryStream(Array.Empty<byte>(), 0, 0, writable: true, publiclyVisible: true);
+        using var stockOutput = new MemoryStream();
+        if (async)
+        {
+            await Assert.ThrowsAsync<NotSupportedException>(() => stock.CopyToAsync(stockFailing, bufferSize));
+            await stock.CopyToAsync(stockOutput, bufferSize);
+        }
+        else
+        {
+            Assert.Throws<NotSupportedException>(() => stock.CopyTo(stockFailing, bufferSize));
+            stock.CopyTo(stockOutput, bufferSize);
+        }
+        Assert.Equal(stockOutput.ToArray(), output.ToArray());
     }
 
     [Fact]
@@ -75,7 +90,7 @@ public sealed class ReaderTests
         using var source = new MemoryStream(backing, writable: false);
         using var destination = new MemoryStream(backing, 0, backing.Length, writable: true, publiclyVisible: true);
         using var reader = new GZipReader();
-        GZipMemoryCopy? copy = GZipMemoryCopy.Rent(reader, source, destination, new byte[8192], 8192);
+        GZipMemoryCopy? copy = GZipMemoryCopy.Rent(reader, source, destination, new byte[8192]);
         Assert.NotNull(copy);
         Assert.False(copy.TryCopy());
         Assert.Equal(0, source.Position);

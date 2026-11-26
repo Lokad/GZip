@@ -239,7 +239,7 @@ public class GZipStream : Stream
 
             GZipReader reader = Reader;
             buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            if (GZipMemoryCopy.Rent(reader, source, destination, buffer, bufferSize) is { } copy && copy.TryCopy())
+            if (GZipMemoryCopy.Rent(reader, source, destination, buffer) is { } copy && copy.TryCopy())
                 return;
 
             int count;
@@ -469,7 +469,7 @@ public class GZipStream : Stream
         try
         {
             buffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            if (GZipMemoryCopy.Rent(reader, source, destination, buffer, bufferSize) is { } copy &&
+            if (GZipMemoryCopy.Rent(reader, source, destination, buffer) is { } copy &&
                 await copy.TryCopyAsync(cancellationToken).ConfigureAwait(false))
                 return;
 
@@ -488,12 +488,33 @@ public class GZipStream : Stream
         }
     }
 
-    private async ValueTask DisposeAsyncCore(Stream stream, GZipWriter? writer, GZipReader? reader)
+    private ValueTask DisposeAsyncCore(Stream stream, GZipWriter? writer, GZipReader? reader)
+    {
+        ValueTask finish = writer?.FinishAsync(stream) ?? ValueTask.CompletedTask;
+        if (!_leaveOpen || !finish.IsCompletedSuccessfully)
+            return AwaitDisposalAsync(finish, stream, writer, reader);
+
+        try
+        {
+            writer?.Dispose();
+            reader?.Dispose();
+            return finish;
+        }
+        catch (Exception error)
+        {
+            return ValueTask.FromException(error);
+        }
+        finally
+        {
+            ExitOperation();
+        }
+    }
+
+    private async ValueTask AwaitDisposalAsync(ValueTask finish, Stream stream, GZipWriter? writer, GZipReader? reader)
     {
         try
         {
-            if (writer is not null)
-                await writer.FinishAsync(stream).ConfigureAwait(false);
+            await finish.ConfigureAwait(false);
         }
         finally
         {

@@ -11,12 +11,11 @@ internal sealed class GZipMemoryCopy : Stream
     private MemoryStream _destination = null!;
     private byte[] _destinationBuffer = null!;
     private byte[] _output = null!;
-    private int _bufferSize;
     private int _consumed;
     private bool _done;
     private bool _aliased;
 
-    internal static GZipMemoryCopy? Rent(GZipReader reader, Stream source, Stream destination, byte[] output, int bufferSize)
+    internal static GZipMemoryCopy? Rent(GZipReader reader, Stream source, Stream destination, byte[] output)
     {
         if (source.GetType() != typeof(MemoryStream) || destination.GetType() != typeof(MemoryStream) ||
             ReferenceEquals(source, destination) || !reader.CanCopyFromMemory((MemoryStream)source))
@@ -33,7 +32,6 @@ internal sealed class GZipMemoryCopy : Stream
         copy._destination = memoryDestination;
         copy._destinationBuffer = buffer.Array!;
         copy._output = output;
-        copy._bufferSize = bufferSize;
         return copy;
     }
 
@@ -44,7 +42,7 @@ internal sealed class GZipMemoryCopy : Stream
         {
             try
             {
-                _source.CopyTo(this, _bufferSize);
+                _source.CopyTo(this, _output.Length);
             }
             finally
             {
@@ -66,7 +64,7 @@ internal sealed class GZipMemoryCopy : Stream
         {
             try
             {
-                await _source.CopyToAsync(this, _bufferSize, cancellationToken).ConfigureAwait(false);
+                await _source.CopyToAsync(this, _output.Length, cancellationToken).ConfigureAwait(false);
             }
             finally
             {
@@ -120,7 +118,7 @@ internal sealed class GZipMemoryCopy : Stream
         InflateStatus status;
         do
         {
-            status = _reader.DecodeCopyInput(input, _output.AsSpan(0, _bufferSize), out int consumed, out int written);
+            status = _reader.DecodeCopyInput(input, _output, out int consumed, out int written);
             _consumed += consumed;
             input = input[consumed..];
             if (written != 0)
@@ -141,7 +139,7 @@ internal sealed class GZipMemoryCopy : Stream
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
-            status = _reader.DecodeCopyInput(input.Span, _output.AsSpan(0, _bufferSize), out int consumed, out int written);
+            status = _reader.DecodeCopyInput(input.Span, _output, out int consumed, out int written);
             _consumed += consumed;
             input = input[consumed..];
             if (written != 0)
