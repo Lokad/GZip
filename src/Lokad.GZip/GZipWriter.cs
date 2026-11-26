@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Runtime.CompilerServices;
 
 namespace Lokad.GZip;
 
@@ -38,7 +39,7 @@ internal sealed class GZipWriter(IDeflateEncoder encoder) : IDisposable
             return;
         while (!input.IsEmpty)
         {
-            DeflateProgress progress = encoder.Encode(input.Span, _output.AsSpan(0, BufferSize), DeflateOperation.Write);
+            DeflateProgress progress = Encode(input.Span, DeflateOperation.Write);
             if (progress.Written > 0)
                 await destination.WriteAsync(_output.AsMemory(0, progress.Written), cancellationToken).ConfigureAwait(false);
             input = input[progress.Consumed..];
@@ -47,6 +48,10 @@ internal sealed class GZipWriter(IDeflateEncoder encoder) : IDisposable
         _wroteBytes = true;
 #endif
     }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    private DeflateProgress Encode(ReadOnlySpan<byte> input, DeflateOperation operation)
+        => encoder.Encode(input, _output.AsSpan(0, BufferSize), operation);
 
     internal void Flush(Stream destination)
     {
