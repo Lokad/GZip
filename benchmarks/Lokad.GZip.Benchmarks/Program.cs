@@ -13,12 +13,19 @@ if (args is ["--smoke"])
         Console.WriteLine($"{workload.Name} {workload.Size:N0} bytes in, {encoded.Length:N0} gzip bytes");
         if (workload == fileWorkload)
             new FileGZipBenchmarks().Verify(fixture, encoded);
+        if (SpanGZipBenchmarks.Workloads.Contains(workload.Name))
+            SpanGZipBenchmarks.Verify(fixture, encoded);
     }
     Console.WriteLine("File-stream compression and decompression verified.");
+    Console.WriteLine("Caller-buffer compression and decompression verified.");
     return 0;
 }
 
-Summary[] summaries = BenchmarkSwitcher.FromAssembly(typeof(GZipBenchmarks).Assembly).Run(args).ToArray();
+bool spans = args.Contains("--span", StringComparer.Ordinal);
+if (spans)
+    args = args.Where(arg => arg != "--span").ToArray();
+Type[] benchmarks = spans ? [typeof(SpanGZipBenchmarks)] : [typeof(GZipBenchmarks), typeof(FileGZipBenchmarks)];
+Summary[] summaries = BenchmarkSwitcher.FromTypes(benchmarks).Run(args).ToArray();
 if (args.Any(arg => arg is "--list" or "--help" or "-h" or "--version"))
     return 0;
 
