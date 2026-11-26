@@ -1,6 +1,7 @@
 using System.Numerics;
 using System.Buffers;
 using System.Buffers.Binary;
+using System.Runtime.CompilerServices;
 
 namespace Lokad.GZip;
 
@@ -12,6 +13,13 @@ internal sealed class DeflateBlockWriter : IDisposable
     private static readonly DeflateCodeTree FixedLiterals = CreateFixedLiterals();
     private static readonly DeflateCodeTree FixedDistances = CreateFixedDistances();
     private static readonly uint[] FixedMatchLengths = CreateFixedMatchLengths();
+    private static readonly LiteralCodes FixedLiteralCodes = CreateFixedLiteralCodes();
+
+    [InlineArray(256)]
+    private struct LiteralCodes
+    {
+        private ushort _first;
+    }
 
     private readonly record struct Symbol(ushort Value, ushort Distance);
     private readonly record struct LengthRun(byte Symbol, byte Value, byte Bits);
@@ -209,7 +217,11 @@ internal sealed class DeflateBlockWriter : IDisposable
 
     internal static void StartFixed(DeflateBits bits, bool final) => bits.Write(final ? 3u : 2u, 3);
 
-    internal static void WriteFixedLiteral(DeflateBits bits, byte value) => FixedLiterals.Send(bits, value);
+    internal static void WriteFixedLiteral(DeflateBits bits, byte value)
+    {
+        uint code = FixedLiteralCodes[value];
+        bits.Write(code >> 4, (int)(code & 15));
+    }
 
     internal static void WriteFixedMatch(DeflateBits bits, int length, int distance)
     {
@@ -352,6 +364,14 @@ internal sealed class DeflateBlockWriter : IDisposable
             lengths[length] = ((uint)code << 5) | (uint)(width - 5);
         }
         return lengths;
+    }
+
+    private static LiteralCodes CreateFixedLiteralCodes()
+    {
+        LiteralCodes codes = default;
+        for (int symbol = 0; symbol < 256; symbol++)
+            codes[symbol] = (ushort)((FixedLiterals.Code(symbol) << 4) | FixedLiterals.Lengths[symbol]);
+        return codes;
     }
 
     private static DeflateCodeTree CreateFixedLiterals()
