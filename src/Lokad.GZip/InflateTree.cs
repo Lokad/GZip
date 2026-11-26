@@ -107,7 +107,7 @@ internal sealed class InflateTree
         if (bits.Count < lookupBits && !bits.Fill(ref input, lookupBits))
             return TryReadSlow(ref bits, ref input, out symbol);
 
-        ushort entry = _root[bits.Peek(RootBits)];
+        ushort entry = _root[(int)bits.Peek(RootBits)];
         if (entry != 0)
         {
             bits.Consume(entry >> RootBits);
