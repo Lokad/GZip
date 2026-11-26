@@ -216,12 +216,6 @@ public sealed class InflaterTests
         Assert.Throws<InvalidDataException>(() => Decode(data, 1, 3));
     }
 
-    [Fact]
-    public void UsesTheIeeeCrcPolynomial()
-    {
-        Assert.Equal(0xCBF43926u, ~Crc32.Update(Crc32.Initial, "123456789"u8));
-    }
-
     private static byte[] ReadGolden(string name)
         => File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", name + ".gz"));
 

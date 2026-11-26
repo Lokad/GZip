@@ -73,6 +73,8 @@ dotnet exec --fx-version 11.0.0 verification/Lokad.GZip.Reference/bin/Release/ne
 For .NET 10, substitute `10.0.15` and `net10.0` in the capture and audit
 commands. Set `DOTNET_EnableHWIntrinsic=0` for a scalar check against the
 same manifest. The audit reports the first differing case by name.
+Verification accepts a patch release of the matching target framework.
+Use the pinned runtime versions in the commands above for qualification.
 
 ## Large member audit
 

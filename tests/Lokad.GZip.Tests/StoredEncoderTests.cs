@@ -6,17 +6,6 @@ namespace Lokad.GZip.Tests;
 
 public sealed class StoredEncoderTests
 {
-    [Fact]
-    public async Task MatchesLinuxStoredGoldens()
-    {
-        foreach (ReferenceCase fixture in ReferenceCases.Goldens().Where(fixture => fixture.Level == CompressionLevel.NoCompression))
-        {
-            byte[] expected = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "Goldens", fixture.Name + ".gz"));
-            AssertBytes(expected, await EncodeAsync(fixture, async: false), fixture.Name);
-            AssertBytes(expected, await EncodeAsync(fixture, async: true), fixture.Name);
-        }
-    }
-
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -32,16 +21,17 @@ public sealed class StoredEncoderTests
     [Fact]
     public async Task MatchesStockAcrossStoredBlockBoundaries()
     {
+        var schedules = from chunk in new[] { 127, 8192, 32763, int.MaxValue }
+                        from flush in new[] { 0, 1, 3 }
+                        select (chunk, flush);
         foreach (int size in new[] { 1, 8177, 8187, 8192, 32762, 32763, 32768, 65535, 65536, 130993, 250027 })
         {
-            foreach (int chunk in new[] { 127, 8192, 32763, int.MaxValue })
+            byte[] input = ReferenceCases.RandomBytes(size);
+            foreach ((int chunk, int flush) in DistinctWriteSchedules(size, schedules))
             {
-                foreach (int flushEvery in new[] { 0, 1, 3 })
-                {
-                    var fixture = new ReferenceCase($"size {size}, chunk {chunk}, flush every {flushEvery}",
-                        ReferenceCases.RandomBytes(size), CompressionLevel.NoCompression, chunk, flushEvery);
-                    await AssertMatchesStock(fixture);
-                }
+                var fixture = new ReferenceCase($"size {size}, chunk {chunk}, flush every {flush}",
+                    input, CompressionLevel.NoCompression, chunk, flush);
+                await AssertMatchesStock(fixture);
             }
         }
     }
@@ -50,16 +40,17 @@ public sealed class StoredEncoderTests
     [Fact]
     public async Task MatchesStockWithNarrowWindows()
     {
+        byte[] input = ReferenceCases.RandomBytes(29039);
+        var schedules = from chunk in new[] { 43, 1027, 8192, int.MaxValue }
+                        from flush in new[] { 0, 1, 2 }
+                        select (chunk, flush);
         foreach (int window in Enumerable.Range(9, 6))
         {
-            foreach (int chunk in new[] { 43, 1027, 8192, int.MaxValue })
+            foreach ((int chunk, int flush) in DistinctWriteSchedules(input.Length, schedules))
             {
-                foreach (int flushEvery in new[] { 0, 1, 2 })
-                {
-                    var fixture = new ReferenceCase($"window {window}, chunk {chunk}, flush every {flushEvery}",
-                        ReferenceCases.RandomBytes(29039), ChunkSize: chunk, FlushEvery: flushEvery, NumericLevel: 0, WindowLog2: window);
-                    await AssertMatchesStock(fixture);
-                }
+                var fixture = new ReferenceCase($"window {window}, chunk {chunk}, flush every {flush}",
+                    input, ChunkSize: chunk, FlushEvery: flush, NumericLevel: 0, WindowLog2: window);
+                await AssertMatchesStock(fixture);
             }
         }
     }

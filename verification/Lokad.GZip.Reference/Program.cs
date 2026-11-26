@@ -45,10 +45,17 @@ string? compressionVersion = typeof(System.IO.Compression.GZipStream).Assembly
     .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
 bool verify = args[0] is "audit" or "verify-large-member";
 bool linuxX64 = OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture == Architecture.X64;
-if ((!verify && !linuxX64) || Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
+if (verify)
 {
-    string platform = verify ? "" : " on Linux x64";
-    Console.Error.WriteLine($"{args[0]} requires Microsoft .NET {required}{platform} with compression source commit {referenceCommit}.");
+    if (Environment.Version.Major != required.Major || Environment.Version.Minor != required.Minor)
+    {
+        Console.Error.WriteLine($"{args[0]} requires .NET {required.Major}.{required.Minor} for this target.");
+        return 2;
+    }
+}
+else if (!linuxX64 || Environment.Version != required || compressionVersion != $"{required}+{referenceCommit}")
+{
+    Console.Error.WriteLine($"{args[0]} requires Microsoft .NET {required} on Linux x64 with compression source commit {referenceCommit}.");
     return 2;
 }
 

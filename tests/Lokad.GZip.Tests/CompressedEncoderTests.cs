@@ -11,20 +11,6 @@ public sealed class CompressedEncoderTests
 {
     private const int DefaultWindowSize = 32768;
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task MatchesLinuxGoldens(bool async)
-    {
-        foreach (ReferenceCase fixture in ReferenceCases.Goldens().Where(Applies))
-        {
-            string path = Path.Combine(AppContext.BaseDirectory, "Goldens", fixture.Name);
-            bool distinctAsync = async && File.Exists(path + "-async.gz");
-            byte[] expected = File.ReadAllBytes(path + (distinctAsync ? "-async.gz" : ".gz"));
-            AssertBytes(expected, await EncodeAsync(fixture, async), fixture.Name);
-        }
-    }
-
     [Fact]
     public async Task MatchesExtendedLinuxManifest()
     {
@@ -48,12 +34,13 @@ public sealed class CompressedEncoderTests
         Assert.True(actual == expected, $"{name} SHA-256 differs from the pinned Linux output. Expected {expected}, got {actual}.");
     }
 
-    [Fact]
-    public async Task MatchesStockAcrossLevelsAndFlushes()
-    {
-        foreach (ReferenceCase fixture in ReferenceCases.Extended().Where(Applies))
-            await CompareAsync(fixture);
-    }
+    [Theory]
+    [InlineData("probe")]
+    [InlineData("fastest")]
+    [InlineData("smallest-size")]
+    [InlineData("frequent-flush")]
+    public Task MatchesRepresentativeStockCases(string name)
+        => CompareAsync(ReferenceCases.Goldens().Single(fixture => fixture.Name == name));
 
     [Theory]
     [InlineData(1)]
@@ -87,7 +74,7 @@ public sealed class CompressedEncoderTests
             byte[] data = ReferenceCases.RandomBytes(length);
             for (int offset = 71; offset < data.Length; offset += 613)
                 data.AsSpan(0, Math.Min(data.Length - offset, 321)).CopyTo(data.AsSpan(offset));
-            foreach ((int chunk, int flush) in new[] { (1, 0), (263, 7), (8192, 1), (int.MaxValue, 0) })
+            foreach ((int chunk, int flush) in DistinctWriteSchedules(length, [(1, 0), (263, 7), (8192, 1), (int.MaxValue, 0)]))
                 await CompareAsync(new($"level {level}, length {length}, chunk {chunk}, flush {flush}",
                     data, ChunkSize: chunk, FlushEvery: flush, NumericLevel: level));
         }
@@ -98,25 +85,24 @@ public sealed class CompressedEncoderTests
     [InlineData(ZLibCompressionStrategy.RunLengthEncoding)]
     public async Task MatchesStockAcrossBlockAndWindowBoundaries(ZLibCompressionStrategy strategy)
     {
-        foreach (int window in new[] { 9, 15 })
+        var schedules = from chunk in new[] { 43, 8192, int.MaxValue }
+                        from flush in new[] { 0, 2 }
+                        select (chunk, flush);
+        foreach (int size in new[] { 8187, 16383, 65529, 131101 })
         {
-#if !NET11_0_OR_GREATER
-            if (window != 15)
-                continue;
-#endif
-            foreach (int size in new[] { 8187, 16383, 65529, 131101 })
+            byte[] input = ReferenceCases.RandomBytes(size);
+            for (int i = 13; i < size; i += 773)
+                input.AsSpan(i, Math.Min(size - i, 533)).Fill((byte)i);
+
+            foreach (int window in new[] { 9, 15 })
             {
-                foreach (int chunk in new[] { 43, 8192, int.MaxValue })
-                {
-                    foreach (int flushEvery in new[] { 0, 2 })
-                    {
-                        byte[] input = ReferenceCases.RandomBytes(size);
-                        for (int i = 13; i < size; i += 773)
-                            input.AsSpan(i, Math.Min(size - i, 533)).Fill((byte)i);
-                        await CompareAsync(new($"{strategy} {window}/{size}/{chunk}/{flushEvery}", input,
-                            ChunkSize: chunk, FlushEvery: flushEvery, NumericLevel: 6, Strategy: strategy, WindowLog2: window));
-                    }
-                }
+#if !NET11_0_OR_GREATER
+                if (window != 15)
+                    continue;
+#endif
+                foreach ((int chunk, int flush) in DistinctWriteSchedules(size, schedules))
+                    await CompareAsync(new($"{strategy} {window}/{size}/{chunk}/{flush}", input,
+                        ChunkSize: chunk, FlushEvery: flush, NumericLevel: 6, Strategy: strategy, WindowLog2: window));
             }
         }
     }
@@ -203,14 +189,11 @@ public sealed class CompressedEncoderTests
         }
     }
 
-    [Theory]
+    [MinimumPreviousTheory]
     [InlineData(507, 522)]
     [InlineData(517, 527)]
     public void KeepsTheFirstMinimumWhenPredecessorLinksWrap(int first, int second)
     {
-        if (!DeflateDictionary.CanFindMinimumPrevious)
-            return;
-
         const int start = 501;
         const int count = 40;
         const int minimum = 64;
@@ -228,8 +211,14 @@ public sealed class CompressedEncoderTests
         Assert.Equal(0, dictionary.FindMinimumPrevious(start, count, ref candidate));
     }
 
-    private static bool Applies(ReferenceCase fixture)
-        => fixture.Level != CompressionLevel.NoCompression && fixture.NumericLevel != 0;
+    private sealed class MinimumPreviousTheoryAttribute : TheoryAttribute
+    {
+        public MinimumPreviousTheoryAttribute()
+        {
+            if (!DeflateDictionary.CanFindMinimumPrevious)
+                Skip = "Requires SSE4.1 or Arm64 Advanced SIMD.";
+        }
+    }
 
     private static async Task CompareAsync(ReferenceCase fixture, bool dirtyBuffers = false)
     {

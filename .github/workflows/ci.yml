@@ -41,7 +41,7 @@ jobs:
         run: >
           dotnet test tests/Lokad.GZip.Tests -c Release --no-restore
           -p:StrictGZipValidation=true
-          --filter 'FullyQualifiedName~ReadingAndCopyingAnEmptySourceMatchesStockValidation|FullyQualifiedName~StoredRefillsPreserveHistoryAndValidateTrailer|FullyQualifiedName~MemoryCopy'
+          --filter Category=StrictValidation
           --logger trx --results-directory TestResults/Strict
       - name: Verify .NET 11 benchmark workloads
         run: dotnet exec --fx-version 11.0.0 benchmarks/Lokad.GZip.Benchmarks/bin/Release/net11.0/Lokad.GZip.Benchmarks.dll --smoke

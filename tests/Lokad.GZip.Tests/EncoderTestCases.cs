@@ -4,6 +4,15 @@ namespace Lokad.GZip.Tests;
 
 internal static class EncoderTestCases
 {
+    internal static IEnumerable<(int Chunk, int Flush)> DistinctWriteSchedules(int length,
+        IEnumerable<(int Chunk, int Flush)> schedules)
+        => schedules.Select(schedule =>
+        {
+            int chunk = Math.Min(schedule.Chunk, length);
+            int writes = (length - 1) / chunk + 1;
+            return (chunk, schedule.Flush <= writes ? schedule.Flush : 0);
+        }).Distinct();
+
     internal static Task<byte[]> EncodeAsync(ReferenceCase fixture, bool async)
         => ReferenceCases.CompressAsync(fixture, CreateStream, async);
 

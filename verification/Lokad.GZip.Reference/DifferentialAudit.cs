@@ -131,7 +131,8 @@ internal static class DifferentialAudit
         using var source = new FragmentedMemoryStream(member, fragment);
         using var decoder = new ManagedGZip(source, CompressionMode.Decompress, leaveOpen: true);
         byte[] buffer = new byte[length];
-        bool async = index % 2 == 0;
+        // Cycle through every input fragment before changing the read mode.
+        bool async = index / InputFragments.Length % 2 == 0;
         int decoded = 0;
         while (true)
         {
