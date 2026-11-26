@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
 
 namespace Lokad.GZip;
 
@@ -726,11 +728,7 @@ internal sealed class GZipInflater(bool stopAtMemberEnd = false) : IDisposable
             {
                 if (prefix == DeflateCodes.MaximumLength)
                 {
-                    // Copy the common full-length match with a constant-size copy and a two-byte tail.
-                    const int headLength = DeflateCodes.MaximumLength - sizeof(ushort);
-                    previousOutput.Slice(source, headLength).CopyTo(bytes);
-                    BinaryPrimitives.WriteUInt16LittleEndian(bytes[headLength..],
-                        BinaryPrimitives.ReadUInt16LittleEndian(previousOutput[(source + headLength)..]));
+                    CopyMaximumMatch(previousOutput.Slice(source, DeflateCodes.MaximumLength), bytes);
                     return;
                 }
                 previousOutput.Slice(source, prefix).CopyTo(bytes);
@@ -754,6 +752,32 @@ internal sealed class GZipInflater(bool stopAtMemberEnd = false) : IDisposable
                 written += length;
             }
         }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void CopyMaximumMatch(ReadOnlySpan<byte> source, Span<byte> destination)
+    {
+        const int headLength = DeflateCodes.MaximumLength - sizeof(ushort);
+        if (Vector256.IsHardwareAccelerated)
+        {
+            // A full-length prefix fits wholly before the match, so the vector stores are disjoint from the input.
+            ReadOnlySpan<Vector256<byte>> input = MemoryMarshal.Cast<byte, Vector256<byte>>(source);
+            Span<Vector256<byte>> output = MemoryMarshal.Cast<byte, Vector256<byte>>(destination);
+            output[0] = input[0];
+            output[1] = input[1];
+            output[2] = input[2];
+            output[3] = input[3];
+            output[4] = input[4];
+            output[5] = input[5];
+            output[6] = input[6];
+            output[7] = input[7];
+        }
+        else
+        {
+            source[..headLength].CopyTo(destination);
+        }
+        BinaryPrimitives.WriteUInt16LittleEndian(destination[headLength..],
+            BinaryPrimitives.ReadUInt16LittleEndian(source[headLength..]));
     }
 
     internal bool CanReadStored(int count)
