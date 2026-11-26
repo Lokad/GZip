@@ -11,6 +11,7 @@ internal sealed class DeflateBlockWriter : IDisposable
     private const int LengthCodeCount = 19;
     private static readonly DeflateCodeTree FixedLiterals = CreateFixedLiterals();
     private static readonly DeflateCodeTree FixedDistances = CreateFixedDistances();
+    private static readonly uint[] FixedMatchLengths = CreateFixedMatchLengths();
 
     private readonly record struct Symbol(ushort Value, ushort Distance);
     private readonly record struct LengthRun(byte Symbol, byte Value, byte Bits);
@@ -212,8 +213,14 @@ internal sealed class DeflateBlockWriter : IDisposable
 
     internal static void WriteFixedMatch(DeflateBits bits, int length, int distance)
     {
-        ulong code = EncodeMatch(length, distance, FixedLiterals, FixedDistances, out int width);
-        bits.Write(code, width);
+        uint lengthCode = FixedMatchLengths[length];
+        int lengthWidth = (int)(lengthCode & 31);
+        int distanceSymbol = DeflateCodes.DistanceCode(distance);
+        int extraWidth = DeflateCodes.DistanceExtra(distanceSymbol);
+        uint extra = (uint)(distance - 1) & ((1u << extraWidth) - 1);
+        uint distanceCode = FixedDistances.Code(distanceSymbol) | (extra << 5);
+        ulong code = (lengthCode >> 5) | ((ulong)distanceCode << lengthWidth);
+        bits.Write(code, lengthWidth + 5 + extraWidth);
     }
 
     internal static void EndFixed(DeflateBits bits, bool final)
@@ -333,6 +340,18 @@ internal sealed class DeflateBlockWriter : IDisposable
         code |= (ulong)(distance - DeflateCodes.DistanceBase(distanceCode)) << width;
         width += DeflateCodes.DistanceExtra(distanceCode);
         return code;
+    }
+
+    private static uint[] CreateFixedMatchLengths()
+    {
+        var lengths = new uint[DeflateCodes.MaximumLength + 1];
+        for (int length = DeflateCodes.MinimumLength; length < lengths.Length; length++)
+        {
+            // Distance one appends five zero bits and no extra bits.
+            ulong code = EncodeMatch(length, 1, FixedLiterals, FixedDistances, out int width);
+            lengths[length] = ((uint)code << 5) | (uint)(width - 5);
+        }
+        return lengths;
     }
 
     private static DeflateCodeTree CreateFixedLiterals()

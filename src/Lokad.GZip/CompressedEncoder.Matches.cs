@@ -221,10 +221,13 @@ internal sealed partial class CompressedEncoder
                 return Math.Min(best, _lookahead);
         }
 
+        ReadOnlySpan<byte> current = _window.AsSpan(_position);
+        int tailOffset = Math.Max(best - (sizeof(ulong) - 1), 0);
+        ulong tail = BinaryPrimitives.ReadUInt64LittleEndian(current[tailOffset..]);
         while (candidate < _position)
         {
             int start = candidate - offset;
-            if (CanImprove(start, best))
+            if (CanImprove(start, best, tailOffset, tail, current))
             {
                 int length = CommonLength(_position, start);
                 if (length > best)
@@ -235,6 +238,8 @@ internal sealed partial class CompressedEncoder
                     best = length;
                     if (best >= settings.Nice)
                         return best;
+                    tailOffset = Math.Max(best - (sizeof(ulong) - 1), 0);
+                    tail = BinaryPrimitives.ReadUInt64LittleEndian(current[tailOffset..]);
                     if (_level == 9 && length > DeflateCodes.MinimumLength && start + length < _position)
                     {
                         if (!FindLongerChain(dictionary, start, length, baseLimit, out candidate, out offset))
@@ -297,19 +302,16 @@ internal sealed partial class CompressedEncoder
         return candidate > baseLimit + offset;
     }
 
-    private bool CanImprove(int candidate, int best)
+    private bool CanImprove(int candidate, int best, int tailOffset, ulong tail, ReadOnlySpan<byte> current)
     {
         ReadOnlySpan<byte> previous = _window.AsSpan(candidate);
-        ReadOnlySpan<byte> current = _window.AsSpan(_position);
-        if (best < sizeof(ulong))
+        if (tailOffset == 0)
         {
-            // For short matches, the two checks cover the first best + 1 bytes.
-            ulong difference = BinaryPrimitives.ReadUInt64LittleEndian(previous) ^ BinaryPrimitives.ReadUInt64LittleEndian(current);
+            ulong difference = BinaryPrimitives.ReadUInt64LittleEndian(previous) ^ tail;
             return (difference << (8 * (sizeof(ulong) - 1 - best))) == 0;
         }
 
-        int offset = best - (sizeof(ulong) - 1);
-        return BinaryPrimitives.ReadUInt64LittleEndian(previous[offset..]) == BinaryPrimitives.ReadUInt64LittleEndian(current[offset..]) &&
+        return BinaryPrimitives.ReadUInt64LittleEndian(previous[tailOffset..]) == tail &&
             BinaryPrimitives.ReadUInt64LittleEndian(previous) == BinaryPrimitives.ReadUInt64LittleEndian(current);
     }
 
