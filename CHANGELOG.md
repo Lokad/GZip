@@ -9,3 +9,4 @@
 - Adds incremental span encoding and decoding with caller-provided buffers.
 - Matches stock retry behavior after a copy destination fails.
 - Matches the disposed `BaseStream` behavior for each .NET target.
+- Speeds up fixed-literal encoding and full-length non-overlapping match copies.

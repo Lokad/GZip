@@ -15,7 +15,7 @@
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageLicenseFile>LICENSE.txt</PackageLicenseFile>
     <PackageTags>gzip;deflate;compression;deterministic</PackageTags>
-    <PackageReleaseNotes>Initial managed gzip stream for .NET 10 and .NET 11.</PackageReleaseNotes>
+    <PackageReleaseNotes>Initial deterministic managed gzip stream for .NET 10 and .NET 11, with incremental encoding and decoding into caller-provided spans.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <DebugType>portable</DebugType>
